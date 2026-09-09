@@ -1,3 +1,8 @@
-fastapi==0.135.1
-pydantic==2.12.5
-uvicorn==0.35.0
+runpod
+torch
+transformers>=4.50.0
+accelerate
+safetensors
+pillow
+huggingface_hub
+pydantic
