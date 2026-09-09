@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -149,6 +150,16 @@ class MedicalModelManager:
         print_disk_usage(
             "MODEL MANAGER START"
         )
+
+        self.medgemma_model = None
+        self.medgemma_processor = None
+
+        self.medsiglip_model = None
+        self.medsiglip_processor = None
+
+        self.biomedclip_model = None
+        self.biomedclip_preprocess = None
+        self.biomedclip_tokenizer = None
 
     @staticmethod
     def _hf_token():
@@ -411,20 +422,28 @@ Return JSON only.
             except Exception:
                 pass
 
-    def run_medgemma(
-        self,
-        images: list[bytes],
-        prompt: str,
-        max_tokens: int,
-    ) -> dict[str, Any]:
+    def _load_medgemma(self):
+        if (
+            self.medgemma_model is not None
+            and self.medgemma_processor is not None
+        ):
+            print(
+                "[MEDGEMMA] Reusing already-loaded model",
+                flush=True,
+            )
+
+            return (
+                self.medgemma_model,
+                self.medgemma_processor,
+            )
 
         print(
-            "[MEDGEMMA] Starting",
+            "[MEDGEMMA] Loading model into memory for first time",
             flush=True,
         )
 
         print_disk_usage(
-            "BEFORE MEDGEMMA"
+            "BEFORE MEDGEMMA LOAD"
         )
 
         local_model_path = (
@@ -437,14 +456,14 @@ Return JSON only.
             flush=True,
         )
 
-        processor = (
+        self.medgemma_processor = (
             AutoProcessor.from_pretrained(
                 local_model_path,
                 local_files_only=True,
             )
         )
 
-        model = (
+        self.medgemma_model = (
             AutoModelForMultimodalLM
             .from_pretrained(
                 local_model_path,
@@ -454,7 +473,147 @@ Return JSON only.
             )
         )
 
-        model.eval()
+        self.medgemma_model.eval()
+
+        print_disk_usage(
+            "AFTER MEDGEMMA LOAD"
+        )
+
+        return (
+            self.medgemma_model,
+            self.medgemma_processor,
+        )
+
+    def _load_medsiglip(self):
+        if (
+            self.medsiglip_model is not None
+            and self.medsiglip_processor is not None
+        ):
+            print(
+                "[MEDSIGLIP] Reusing already-loaded model",
+                flush=True,
+            )
+
+            return (
+                self.medsiglip_model,
+                self.medsiglip_processor,
+            )
+
+        token = self._hf_token()
+
+        print(
+            "[MEDSIGLIP] Loading model into memory for first time",
+            flush=True,
+        )
+
+        print_disk_usage(
+            "MEDSIGLIP BEFORE LOAD"
+        )
+
+        self.medsiglip_processor = (
+            AutoProcessor.from_pretrained(
+                MEDSIGLIP_MODEL,
+                token=token,
+            )
+        )
+
+        self.medsiglip_model = (
+            AutoModelForZeroShotImageClassification
+            .from_pretrained(
+                MEDSIGLIP_MODEL,
+                token=token,
+            )
+            .to(
+                self.device
+            )
+        )
+
+        self.medsiglip_model.eval()
+
+        print_disk_usage(
+            "MEDSIGLIP AFTER LOAD"
+        )
+
+        return (
+            self.medsiglip_model,
+            self.medsiglip_processor,
+        )
+
+    def _load_biomedclip(self):
+        if (
+            self.biomedclip_model is not None
+            and self.biomedclip_preprocess is not None
+            and self.biomedclip_tokenizer is not None
+        ):
+            print(
+                "[BIOMEDCLIP] Reusing already-loaded model",
+                flush=True,
+            )
+
+            return (
+                self.biomedclip_model,
+                self.biomedclip_preprocess,
+                self.biomedclip_tokenizer,
+            )
+
+        print(
+            "[BIOMEDCLIP] Loading model into memory for first time",
+            flush=True,
+        )
+
+        print_disk_usage(
+            "BIOMEDCLIP BEFORE LOAD"
+        )
+
+        (
+            self.biomedclip_model,
+            _,
+            self.biomedclip_preprocess,
+        ) = (
+            open_clip
+            .create_model_and_transforms(
+                BIOMEDCLIP_MODEL
+            )
+        )
+
+        self.biomedclip_tokenizer = (
+            open_clip.get_tokenizer(
+                BIOMEDCLIP_MODEL
+            )
+        )
+
+        self.biomedclip_model = (
+            self.biomedclip_model
+            .to(
+                self.device
+            )
+        )
+
+        self.biomedclip_model.eval()
+
+        print_disk_usage(
+            "BIOMEDCLIP AFTER LOAD"
+        )
+
+        return (
+            self.biomedclip_model,
+            self.biomedclip_preprocess,
+            self.biomedclip_tokenizer,
+        )
+
+    def run_medgemma(
+        self,
+        images: list[bytes],
+        prompt: str,
+        max_tokens: int,
+    ) -> dict[str, Any]:
+
+        print(
+            "[MEDGEMMA] Starting",
+            flush=True,
+        )
+
+        model, processor = self._load_medgemma()
 
         pil_images = self._images(
             images
@@ -545,15 +704,8 @@ Return JSON only.
 
         del output
         del inputs
-        del model
-        del processor
+        del generated
         del pil_images
-
-        self._cleanup_gpu()
-
-        print_disk_usage(
-            "MEDGEMMA AFTER CLEANUP"
-        )
 
         return result
 
@@ -561,37 +713,12 @@ Return JSON only.
         self,
         images: list[bytes],
     ) -> dict[str, Any]:
-
-        token = self._hf_token()
-
         print(
             "[MEDSIGLIP] Starting",
             flush=True,
         )
 
-        print_disk_usage(
-            "MEDSIGLIP BEFORE LOAD"
-        )
-
-        processor = (
-            AutoProcessor.from_pretrained(
-                MEDSIGLIP_MODEL,
-                token=token,
-            )
-        )
-
-        model = (
-            AutoModelForZeroShotImageClassification
-            .from_pretrained(
-                MEDSIGLIP_MODEL,
-                token=token,
-            )
-            .to(
-                self.device
-            )
-        )
-
-        model.eval()
+        model, processor = self._load_medsiglip()
 
         labels = [
             "normal medical appearance",
@@ -663,15 +790,7 @@ Return JSON only.
 
         del outputs
         del inputs
-        del model
-        del processor
         del image
-
-        self._cleanup_gpu()
-
-        print_disk_usage(
-            "MEDSIGLIP AFTER CLEANUP"
-        )
 
         return result
 
@@ -685,28 +804,13 @@ Return JSON only.
             flush=True,
         )
 
-        print_disk_usage(
-            "BIOMEDCLIP BEFORE LOAD"
+        (
+            model,
+            preprocess,
+            tokenizer,
+        ) = (
+            self._load_biomedclip()
         )
-
-        model, _, preprocess = (
-            open_clip
-            .create_model_and_transforms(
-                BIOMEDCLIP_MODEL
-            )
-        )
-
-        tokenizer = (
-            open_clip.get_tokenizer(
-                BIOMEDCLIP_MODEL
-            )
-        )
-
-        model = model.to(
-            self.device
-        )
-
-        model.eval()
 
         labels = [
             "normal medical image",
@@ -800,13 +904,6 @@ Return JSON only.
         del text_features
         del image
         del text
-        del model
-
-        self._cleanup_gpu()
-
-        print_disk_usage(
-            "BIOMEDCLIP AFTER CLEANUP"
-        )
 
         return result
 
@@ -818,10 +915,14 @@ Return JSON only.
     ) -> dict[str, Any]:
 
         results = {}
+        timings = {}
+        total_start = time.perf_counter()
 
         print_disk_usage(
             "ANALYSIS START"
         )
+
+        model_start = time.perf_counter()
 
         try:
             results[
@@ -841,9 +942,19 @@ Return JSON only.
 
             self._cleanup_gpu()
 
+        timings[
+            "medgemma_seconds"
+        ] = round(
+            time.perf_counter()
+            - model_start,
+            3,
+        )
+
         print_disk_usage(
             "AFTER MEDGEMMA"
         )
+
+        model_start = time.perf_counter()
 
         try:
             results[
@@ -861,9 +972,19 @@ Return JSON only.
 
             self._cleanup_gpu()
 
+        timings[
+            "medsiglip_seconds"
+        ] = round(
+            time.perf_counter()
+            - model_start,
+            3,
+        )
+
         print_disk_usage(
             "AFTER MEDSIGLIP"
         )
+
+        model_start = time.perf_counter()
 
         try:
             results[
@@ -880,6 +1001,26 @@ Return JSON only.
             }
 
             self._cleanup_gpu()
+
+        timings[
+            "biomedclip_seconds"
+        ] = round(
+            time.perf_counter()
+            - model_start,
+            3,
+        )
+
+        timings[
+            "total_seconds"
+        ] = round(
+            time.perf_counter()
+            - total_start,
+            3,
+        )
+
+        results[
+            "_timings"
+        ] = timings
 
         print_disk_usage(
             "ANALYSIS COMPLETE"
