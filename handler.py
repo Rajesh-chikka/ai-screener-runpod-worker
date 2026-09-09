@@ -1,30 +1,89 @@
 import os
-import sys
-
-print("=== HANDLER.PY STARTED ===", flush=True)
-print(f"Python executable: {sys.executable}", flush=True)
-print(f"Working directory: {os.getcwd()}", flush=True)
-print(f"Files: {os.listdir('.')}", flush=True)
+from pathlib import Path
 
 import runpod
 
-print("=== RUNPOD IMPORTED ===", flush=True)
-
-from model_manager import model_manager
-
-print("=== MODEL MANAGER IMPORTED ===", flush=True)
-
 
 def handler(job):
-    print("=== JOB RECEIVED ===", flush=True)
+    cache_root = Path(
+        "/runpod-volume/huggingface-cache/hub"
+    )
+
+    medgemma_dir = (
+        cache_root
+        / "models--google--medgemma-1.5-4b-it"
+    )
+
+    snapshots_dir = (
+        medgemma_dir
+        / "snapshots"
+    )
+
+    snapshot_names = []
+
+    if snapshots_dir.exists():
+        snapshot_names = [
+            item.name
+            for item in snapshots_dir.iterdir()
+            if item.is_dir()
+        ]
 
     return {
-        "status": "diagnostic",
-        "message": "handler.py is running",
+        "diagnostic": True,
+
+        "cache_root": str(
+            cache_root
+        ),
+
+        "cache_root_exists":
+            cache_root.exists(),
+
+        "medgemma_dir": str(
+            medgemma_dir
+        ),
+
+        "medgemma_dir_exists":
+            medgemma_dir.exists(),
+
+        "snapshots_dir_exists":
+            snapshots_dir.exists(),
+
+        "snapshots":
+            snapshot_names,
+
+        "environment": {
+            "RUNPOD_MODEL_PATH":
+                os.getenv(
+                    "RUNPOD_MODEL_PATH"
+                ),
+
+            "RUNPOD_MODEL_NAME":
+                os.getenv(
+                    "RUNPOD_MODEL_NAME"
+                ),
+
+            "MODEL_PATH":
+                os.getenv(
+                    "MODEL_PATH"
+                ),
+
+            "HF_HOME":
+                os.getenv(
+                    "HF_HOME"
+                ),
+
+            "HF_HUB_CACHE":
+                os.getenv(
+                    "HF_HUB_CACHE"
+                ),
+
+            "TRANSFORMERS_CACHE":
+                os.getenv(
+                    "TRANSFORMERS_CACHE"
+                ),
+        },
     }
 
-
-print("=== STARTING RUNPOD SERVERLESS ===", flush=True)
 
 runpod.serverless.start(
     {
