@@ -1,88 +1,205 @@
-import os
-from pathlib import Path
+import base64
+import binascii
+from typing import Any
 
 import runpod
 
+from model_manager import model_manager
+
+
+MAX_IMAGES = 8
+DEFAULT_MAX_TOKENS = 512
+
+
+def decode_image(value: str) -> bytes:
+    if not isinstance(value, str) or not value:
+        raise ValueError(
+            "Image must be a non-empty base64 string."
+        )
+
+    if value.startswith("data:"):
+        if "," not in value:
+            raise ValueError(
+                "Invalid image data URL."
+            )
+
+        _, value = value.split(",", 1)
+
+    try:
+        return base64.b64decode(
+            value,
+            validate=True,
+        )
+
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError(
+            "Invalid base64 image."
+        ) from exc
+
+
+def validate_input(
+    job_input: dict[str, Any],
+) -> tuple[str, list[str], int]:
+
+    prompt = str(
+        job_input.get(
+            "prompt",
+            ""
+        )
+    ).strip()
+
+    raw_images = (
+        job_input.get(
+            "images"
+        )
+        or []
+    )
+
+    max_tokens = int(
+        job_input.get(
+            "max_tokens",
+            DEFAULT_MAX_TOKENS,
+        )
+    )
+
+    if not prompt:
+        raise ValueError(
+            "prompt is required"
+        )
+
+    if not isinstance(
+        raw_images,
+        list,
+    ):
+        raise ValueError(
+            "images must be a list"
+        )
+
+    if not raw_images:
+        raise ValueError(
+            "at least one image is required"
+        )
+
+    if len(raw_images) > MAX_IMAGES:
+        raise ValueError(
+            f"maximum {MAX_IMAGES} images per request"
+        )
+
+    if (
+        max_tokens < 1
+        or max_tokens > 2048
+    ):
+        raise ValueError(
+            "max_tokens must be between 1 and 2048"
+        )
+
+    return (
+        prompt,
+        raw_images,
+        max_tokens,
+    )
+
 
 def handler(job):
-    cache_root = Path(
-        "/runpod-volume/huggingface-cache/hub"
-    )
+    try:
+        job_input = (
+            job.get("input")
+            or {}
+        )
 
-    medgemma_dir = (
-        cache_root
-        / "models--google--medgemma-1.5-4b-it"
-    )
+        (
+            prompt,
+            raw_images,
+            max_tokens,
+        ) = validate_input(
+            job_input
+        )
 
-    snapshots_dir = (
-        medgemma_dir
-        / "snapshots"
-    )
-
-    snapshot_names = []
-
-    if snapshots_dir.exists():
-        snapshot_names = [
-            item.name
-            for item in snapshots_dir.iterdir()
-            if item.is_dir()
+        images = [
+            decode_image(
+                value
+            )
+            for value
+            in raw_images
         ]
 
-    return {
-        "diagnostic": True,
+        model_results = (
+            model_manager.analyze_all(
+                images=images,
+                prompt=prompt,
+                max_tokens=max_tokens,
+            )
+        )
 
-        "cache_root": str(
-            cache_root
-        ),
+        consensus = (
+            model_manager.build_consensus(
+                model_results
+            )
+        )
 
-        "cache_root_exists":
-            cache_root.exists(),
+        if consensus.get(
+            "error"
+        ):
+            return {
+                "error":
+                    consensus["error"],
 
-        "medgemma_dir": str(
-            medgemma_dir
-        ),
+                "models":
+                    model_results,
 
-        "medgemma_dir_exists":
-            medgemma_dir.exists(),
+                "image_count":
+                    len(images),
+            }
 
-        "snapshots_dir_exists":
-            snapshots_dir.exists(),
+        return {
+            "result": {
+                "findings":
+                    consensus[
+                        "findings"
+                    ],
 
-        "snapshots":
-            snapshot_names,
+                "severity":
+                    consensus[
+                        "severity"
+                    ],
 
-        "environment": {
-            "RUNPOD_MODEL_PATH":
-                os.getenv(
-                    "RUNPOD_MODEL_PATH"
-                ),
+                "confidence":
+                    consensus[
+                        "confidence"
+                    ],
 
-            "RUNPOD_MODEL_NAME":
-                os.getenv(
-                    "RUNPOD_MODEL_NAME"
-                ),
+                "flags":
+                    consensus[
+                        "flags"
+                    ],
 
-            "MODEL_PATH":
-                os.getenv(
-                    "MODEL_PATH"
-                ),
+                "evidence":
+                    consensus[
+                        "evidence"
+                    ],
 
-            "HF_HOME":
-                os.getenv(
-                    "HF_HOME"
-                ),
+                "limitations":
+                    consensus[
+                        "limitations"
+                    ],
 
-            "HF_HUB_CACHE":
-                os.getenv(
-                    "HF_HUB_CACHE"
-                ),
+                "supporting_labels":
+                    consensus[
+                        "supporting_labels"
+                    ],
+            },
 
-            "TRANSFORMERS_CACHE":
-                os.getenv(
-                    "TRANSFORMERS_CACHE"
-                ),
-        },
-    }
+            "models":
+                model_results,
+
+            "image_count":
+                len(images),
+        }
+
+    except Exception as exc:
+        return {
+            "error": str(exc)
+        }
 
 
 runpod.serverless.start(
