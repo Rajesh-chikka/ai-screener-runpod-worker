@@ -60,10 +60,6 @@ def print_disk_usage(label: str):
 
 
 def resolve_cached_medgemma_path() -> str:
-    """
-    Resolve MedGemma from RunPod cached model storage.
-    """
-
     model_directory = (
         RUNPOD_HF_CACHE_ROOT
         / "models--google--medgemma-1.5-4b-it"
@@ -105,9 +101,7 @@ def resolve_cached_medgemma_path() -> str:
                 flush=True,
             )
 
-            return str(
-                snapshot_path
-            )
+            return str(snapshot_path)
 
     if snapshots_directory.exists():
         snapshots = [
@@ -131,9 +125,7 @@ def resolve_cached_medgemma_path() -> str:
                 flush=True,
             )
 
-            return str(
-                snapshot_path
-            )
+            return str(snapshot_path)
 
     raise RuntimeError(
         "MedGemma cache directory exists, "
@@ -179,30 +171,50 @@ class MedicalModelManager:
     def _analysis_prompt(
         prompt: str,
     ) -> str:
+
         return f"""
-Analyze this medical screening image.
+You are analyzing a medical screening image.
 
-This is screening support only, not a confirmed diagnosis.
+This is screening support only and is not a confirmed diagnosis.
 
-Return ONLY valid JSON:
+Your entire response MUST be exactly one valid JSON object.
+
+Do not use Markdown.
+Do not use ```json.
+Do not write anything before the JSON.
+Do not write anything after the JSON.
+
+Use exactly this schema:
 
 {{
-  "findings": "concise visible findings",
-  "severity": "normal|low|moderate|high",
-  "confidence": "low|medium|high",
-  "flags": ["short visible concern"],
-  "evidence": ["visible observation"],
-  "limitations": ["important limitation"]
+  "findings": "concise description of visible findings",
+  "severity": "normal",
+  "confidence": "low",
+  "flags": [],
+  "evidence": [],
+  "limitations": []
 }}
 
-Do not invent medical history.
-Only use visible evidence.
+Allowed severity values:
+"normal", "low", "moderate", "high"
 
-If the image does not contain meaningful medical information,
-state that clearly in findings and limitations.
+Allowed confidence values:
+"low", "medium", "high"
+
+If the image is not medically meaningful:
+- severity must be "normal"
+- confidence must be "low"
+- explain that in findings
+- add the reason to limitations
+
+Do not invent patient history.
+Do not infer facts that are not visible.
+Only use visible image evidence.
 
 Context:
 {prompt}
+
+Return JSON only.
 """.strip()
 
     @staticmethod
@@ -210,34 +222,96 @@ Context:
         text: str,
     ) -> dict[str, Any]:
 
-        text = text.strip()
+        if not text:
+            raise ValueError(
+                "MedGemma returned an empty response."
+            )
 
-        text = re.sub(
+        original_text = text.strip()
+
+        print(
+            f"[MEDGEMMA RAW OUTPUT] {original_text}",
+            flush=True,
+        )
+
+        cleaned = re.sub(
             r"^```(?:json)?\s*",
             "",
-            text,
+            original_text,
             flags=re.IGNORECASE,
         )
 
-        text = re.sub(
+        cleaned = re.sub(
             r"\s*```$",
             "",
-            text,
+            cleaned,
         )
 
-        start = text.find("{")
-        end = text.rfind("}")
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
 
-        if start == -1 or end == -1:
-            raise ValueError(
-                "MedGemma did not return JSON."
-            )
+        data = None
 
-        data = json.loads(
-            text[
+        if (
+            start != -1
+            and end != -1
+            and end > start
+        ):
+            json_text = cleaned[
                 start:end + 1
             ]
-        )
+
+            try:
+                data = json.loads(
+                    json_text
+                )
+
+            except json.JSONDecodeError:
+                data = None
+
+        if data is None:
+            lower_text = (
+                original_text.lower()
+            )
+
+            non_medical_phrases = [
+                "not a medical image",
+                "no medical information",
+                "does not contain medical",
+                "does not provide medical",
+                "no meaningful medical",
+                "cannot assess",
+                "unable to assess",
+            ]
+
+            is_non_medical = any(
+                phrase in lower_text
+                for phrase in non_medical_phrases
+            )
+
+            return {
+                "findings":
+                    original_text,
+
+                "severity":
+                    "normal"
+                    if is_non_medical
+                    else "low",
+
+                "confidence":
+                    "low",
+
+                "flags":
+                    [],
+
+                "evidence":
+                    [],
+
+                "limitations": [
+                    "MedGemma returned unstructured text "
+                    "instead of the requested JSON format."
+                ],
+            }
 
         severity = str(
             data.get(
@@ -309,11 +383,21 @@ Context:
                     "",
                 )
             ).strip(),
-            "severity": severity,
-            "confidence": confidence,
-            "flags": flags,
-            "evidence": evidence,
-            "limitations": limitations,
+
+            "severity":
+                severity,
+
+            "confidence":
+                confidence,
+
+            "flags":
+                flags,
+
+            "evidence":
+                evidence,
+
+            "limitations":
+                limitations,
         }
 
     def _cleanup_gpu(self):
@@ -848,6 +932,20 @@ Context:
             findings.lower()
         )
 
+        limitations_text = " ".join(
+            str(item)
+            for item in medgemma.get(
+                "limitations",
+                [],
+            )
+        ).lower()
+
+        medical_context = (
+            findings_lower
+            + " "
+            + limitations_text
+        )
+
         non_medical_phrases = [
             "does not provide any medical information",
             "no medical information",
@@ -860,7 +958,7 @@ Context:
         ]
 
         is_non_medical = any(
-            phrase in findings_lower
+            phrase in medical_context
             for phrase in non_medical_phrases
         )
 
