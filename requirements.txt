@@ -7,3 +7,4 @@ huggingface_hub
 pydantic
 open-clip-torch
 timm
+sentencepiece
