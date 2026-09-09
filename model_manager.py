@@ -9,7 +9,7 @@ import torch
 from PIL import Image
 from qwen_vl_utils import process_vision_info
 from transformers import (
-    AutoModelForMultimodalLM,
+    AutoModelForImageTextRiText,
     AutoProcessor,
     Qwen2_5_VLForConditionalGeneration,
 )
@@ -115,7 +115,7 @@ Screening context:
             token=token,
         )
 
-        self.model = AutoModelForMultimodalLM.from_pretrained(
+        self.model = AutoModelForImageTextToText.from_pretrained(
             MEDGEMMA_MODEL,
             token=token,
             torch_dtype=torch.bfloat16,
