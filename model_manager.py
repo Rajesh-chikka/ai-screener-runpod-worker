@@ -7,15 +7,23 @@ from typing import Any
 
 import torch
 from PIL import Image
-from transformers import AutoProcessor, AutoModelForImageTextToText
+from qwen_vl_utils import process_vision_info
+from transformers import (
+    AutoModelForMultimodalLM,
+    AutoProcessor,
+    Qwen2_5_VLForConditionalGeneration,
+)
 
+
+MEDGEMMA_MODEL = "google/medgemma-1.5-4b-it"
+LINGSHU_MODEL = "lingshu-medical-mllm/Lingshu-7B"
+OCTOMED_MODEL = "OctoMed/OctoMed-7B"
 
 MODEL_IDS = [
-    "google/medgemma-1.5-4b-it",
-    "lingshu-medical-mllm/Lingshu-7B",
-    "OctoMed/OctoMed-7B",
+    MEDGEMMA_MODEL,
+    LINGSHU_MODEL,
+    OCTOMED_MODEL,
 ]
-
 
 SEVERITY_ORDER = {
     "normal": 0,
@@ -24,14 +32,20 @@ SEVERITY_ORDER = {
     "high": 3,
 }
 
+CONFIDENCE_WEIGHT = {
+    "low": 1.0,
+    "medium": 1.5,
+    "high": 2.0,
+}
+
 
 class MedicalModelManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self.model = None
         self.processor = None
-        self.loaded_model_id = None
+        self.loaded_model_id: str | None = None
 
-    def _release_model(self):
+    def _release_model(self) -> None:
         self.model = None
         self.processor = None
         self.loaded_model_id = None
@@ -41,97 +55,161 @@ class MedicalModelManager:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    def _load_model(self, model_id: str):
-        if self.loaded_model_id == model_id and self.model is not None:
-            return
-
-        self._release_model()
-
-        token = os.getenv("HF_TOKEN")
-
-        self.processor = AutoProcessor.from_pretrained(
-            model_id,
-            token=token,
-            trust_remote_code=True,
-        )
-
-        self.model = AutoModelForImageTextToText.from_pretrained(
-            model_id,
-            token=token,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
-            trust_remote_code=True,
-        )
-
-        self.model.eval()
-        self.loaded_model_id = model_id
+    @staticmethod
+    def _hf_token() -> str | None:
+        return os.getenv("HF_TOKEN")
 
     @staticmethod
     def _prepare_images(images: list[bytes]) -> list[Image.Image]:
-        return [
-            Image.open(io.BytesIO(image)).convert("RGB")
-            for image in images
-        ]
+        prepared = []
+
+        for image_bytes in images:
+            image = Image.open(
+                io.BytesIO(image_bytes)
+            ).convert("RGB")
+
+            prepared.append(image)
+
+        return prepared
 
     @staticmethod
     def _analysis_prompt(user_prompt: str) -> str:
         return f"""
-You are reviewing medical screening imagery.
+You are analyzing medical screening imagery.
 
-This is a screening-support task, not a confirmed diagnosis.
+This output is screening support only and is not a confirmed diagnosis.
 
-Analyze only what is visible in the provided image or images.
+Analyze only the visible information in the supplied image or images.
 
-Return ONLY valid JSON with this structure:
+Return ONLY valid JSON using exactly this structure:
 
 {{
-  "findings": "short clinically relevant description",
+  "findings": "concise medically relevant visible findings",
   "severity": "normal|low|moderate|high",
   "confidence": "low|medium|high",
-  "flags": ["short flag"],
+  "flags": ["short relevant finding"],
   "evidence": ["specific visible observation"],
   "limitations": ["important limitation"]
 }}
 
 Rules:
-- Do not invent patient history.
-- Do not claim certainty where the image is ambiguous.
-- Describe abnormal and normal visible findings.
-- Use "normal" severity when no concerning visual abnormality is seen.
-- Keep findings concise.
+- Do not invent medical history.
+- Do not infer facts that are not visually supported.
+- Mention normal visible findings when relevant.
+- If no concerning abnormality is visible, use severity "normal".
+- If image quality is poor, lower confidence.
 - Evidence must describe visible observations.
-- If image quality is inadequate, lower confidence and explain why.
+- Keep findings concise.
 - Do not include markdown.
-- Do not include text outside the JSON.
+- Do not include text outside the JSON object.
 
 Screening context:
 {user_prompt}
 """.strip()
 
-    def _generate_single(
+    def _load_medgemma(self) -> None:
+        token = self._hf_token()
+
+        self.processor = AutoProcessor.from_pretrained(
+            MEDGEMMA_MODEL,
+            token=token,
+        )
+
+        self.model = AutoModelForMultimodalLM.from_pretrained(
+            MEDGEMMA_MODEL,
+            token=token,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+        )
+
+        self.model.eval()
+        self.loaded_model_id = MEDGEMMA_MODEL
+
+    def _load_qwen_medical_model(
         self,
         model_id: str,
+    ) -> None:
+        token = self._hf_token()
+
+        self.processor = AutoProcessor.from_pretrained(
+            model_id,
+            token=token,
+        )
+
+        self.model = (
+            Qwen2_5_VLForConditionalGeneration
+            .from_pretrained(
+                model_id,
+                token=token,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+            )
+        )
+
+        self.model.eval()
+        self.loaded_model_id = model_id
+
+    def _load_model(
+        self,
+        model_id: str,
+    ) -> None:
+        if (
+            self.model is not None
+            and self.loaded_model_id == model_id
+        ):
+            return
+
+        self._release_model()
+
+        if model_id == MEDGEMMA_MODEL:
+            self._load_medgemma()
+            return
+
+        if model_id in {
+            LINGSHU_MODEL,
+            OCTOMED_MODEL,
+        }:
+            self._load_qwen_medical_model(
+                model_id
+            )
+            return
+
+        raise ValueError(
+            f"Unsupported model: {model_id}"
+        )
+
+    def _generate_medgemma(
+        self,
         images: list[bytes],
         prompt: str,
         max_tokens: int,
-    ) -> dict[str, Any]:
+    ) -> str:
+        self._load_model(
+            MEDGEMMA_MODEL
+        )
 
-        self._load_model(model_id)
-
-        pil_images = self._prepare_images(images)
+        pil_images = self._prepare_images(
+            images
+        )
 
         content = []
 
         for image in pil_images:
-            content.append({
-                "type": "image",
-                "image": image,
-            })
+            content.append(
+                {
+                    "type": "image",
+                    "image": image,
+                }
+            )
 
-        content.append({
-            "type": "text",
-            "text": self._analysis_prompt(prompt),
-        })
+        content.append(
+            {
+                "type": "text",
+                "text": self._analysis_prompt(
+                    prompt
+                ),
+            }
+        )
 
         messages = [
             {
@@ -140,45 +218,183 @@ Screening context:
             }
         ]
 
-        inputs = self.processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
+        inputs = (
+            self.processor.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+            )
         )
 
         inputs = {
-            key: value.to(self.model.device)
-            if hasattr(value, "to")
-            else value
+            key: (
+                value.to(self.model.device)
+                if hasattr(value, "to")
+                else value
+            )
             for key, value in inputs.items()
         }
 
-        input_length = inputs["input_ids"].shape[-1]
+        input_length = (
+            inputs["input_ids"].shape[-1]
+        )
 
         with torch.inference_mode():
-            output = self.model.generate(
+            generated_ids = self.model.generate(
                 **inputs,
                 max_new_tokens=max_tokens,
                 do_sample=False,
             )
 
-        generated = output[0][input_length:]
+        output_ids = generated_ids[
+            0,
+            input_length:
+        ]
 
-        text = self.processor.decode(
-            generated,
+        return self.processor.decode(
+            output_ids,
             skip_special_tokens=True,
         )
 
-        parsed = self._parse_json(text)
+    def _generate_qwen_model(
+        self,
+        model_id: str,
+        images: list[bytes],
+        prompt: str,
+        max_tokens: int,
+    ) -> str:
+        self._load_model(
+            model_id
+        )
 
-        parsed["model"] = model_id
+        pil_images = self._prepare_images(
+            images
+        )
 
-        return parsed
+        content = []
+
+        for image in pil_images:
+            content.append(
+                {
+                    "type": "image",
+                    "image": image,
+                }
+            )
+
+        content.append(
+            {
+                "type": "text",
+                "text": self._analysis_prompt(
+                    prompt
+                ),
+            }
+        )
+
+        messages = [
+            {
+                "role": "user",
+                "content": content,
+            }
+        ]
+
+        text = (
+            self.processor.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        )
+
+        image_inputs, video_inputs = (
+            process_vision_info(
+                messages
+            )
+        )
+
+        inputs = self.processor(
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        )
+
+        inputs = inputs.to(
+            self.model.device
+        )
+
+        with torch.inference_mode():
+            generated_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                do_sample=False,
+            )
+
+        trimmed_ids = [
+            output_ids[
+                len(input_ids):
+            ]
+            for input_ids, output_ids
+            in zip(
+                inputs.input_ids,
+                generated_ids,
+            )
+        ]
+
+        output_text = (
+            self.processor.batch_decode(
+                trimmed_ids,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )
+        )
+
+        return output_text[0]
+
+    def _generate_single(
+        self,
+        model_id: str,
+        images: list[bytes],
+        prompt: str,
+        max_tokens: int,
+    ) -> dict[str, Any]:
+        if model_id == MEDGEMMA_MODEL:
+            text = self._generate_medgemma(
+                images=images,
+                prompt=prompt,
+                max_tokens=max_tokens,
+            )
+
+        elif model_id in {
+            LINGSHU_MODEL,
+            OCTOMED_MODEL,
+        }:
+            text = self._generate_qwen_model(
+                model_id=model_id,
+                images=images,
+                prompt=prompt,
+                max_tokens=max_tokens,
+            )
+
+        else:
+            raise ValueError(
+                f"Unsupported model: {model_id}"
+            )
+
+        result = self._parse_json(
+            text
+        )
+
+        result["model"] = model_id
+
+        return result
 
     @staticmethod
-    def _parse_json(text: str) -> dict[str, Any]:
+    def _parse_json(
+        text: str,
+    ) -> dict[str, Any]:
         text = text.strip()
 
         text = re.sub(
@@ -207,26 +423,46 @@ Screening context:
         )
 
         severity = str(
-            data.get("severity", "normal")
+            data.get(
+                "severity",
+                "normal",
+            )
         ).lower()
 
         if severity not in SEVERITY_ORDER:
             severity = "normal"
 
         confidence = str(
-            data.get("confidence", "low")
+            data.get(
+                "confidence",
+                "low",
+            )
         ).lower()
 
-        if confidence not in {
-            "low",
-            "medium",
-            "high",
-        }:
+        if confidence not in CONFIDENCE_WEIGHT:
             confidence = "low"
+
+        flags = data.get(
+            "flags",
+            [],
+        )
+
+        evidence = data.get(
+            "evidence",
+            [],
+        )
+
+        limitations = data.get(
+            "limitations",
+            [],
+        )
 
         return {
             "findings": str(
-                data.get("findings", "")
+                data.get(
+                    "findings",
+                    "",
+                )
             ).strip(),
 
             "severity": severity,
@@ -234,21 +470,21 @@ Screening context:
             "confidence": confidence,
 
             "flags": [
-                str(value).strip()
-                for value in data.get("flags", [])
-                if str(value).strip()
+                str(item).strip()
+                for item in flags
+                if str(item).strip()
             ],
 
             "evidence": [
-                str(value).strip()
-                for value in data.get("evidence", [])
-                if str(value).strip()
+                str(item).strip()
+                for item in evidence
+                if str(item).strip()
             ],
 
             "limitations": [
-                str(value).strip()
-                for value in data.get("limitations", [])
-                if str(value).strip()
+                str(item).strip()
+                for item in limitations
+                if str(item).strip()
             ],
         }
 
@@ -258,25 +494,30 @@ Screening context:
         prompt: str,
         max_tokens: int = 512,
     ) -> list[dict[str, Any]]:
-
         results = []
 
         for model_id in MODEL_IDS:
             try:
-                result = self._generate_single(
-                    model_id=model_id,
-                    images=images,
-                    prompt=prompt,
-                    max_tokens=max_tokens,
+                result = (
+                    self._generate_single(
+                        model_id=model_id,
+                        images=images,
+                        prompt=prompt,
+                        max_tokens=max_tokens,
+                    )
                 )
 
-                results.append(result)
+                results.append(
+                    result
+                )
 
             except Exception as exc:
-                results.append({
-                    "model": model_id,
-                    "error": str(exc),
-                })
+                results.append(
+                    {
+                        "model": model_id,
+                        "error": str(exc),
+                    }
+                )
 
             finally:
                 self._release_model()
@@ -287,144 +528,218 @@ Screening context:
     def build_consensus(
         results: list[dict[str, Any]],
     ) -> dict[str, Any]:
-
-        valid = [
+        valid_results = [
             result
             for result in results
             if not result.get("error")
         ]
 
-        if not valid:
+        if not valid_results:
             return {
-                "error": "All medical models failed."
+                "error":
+                    "All medical models failed."
             }
-
-        confidence_weight = {
-            "low": 1.0,
-            "medium": 1.5,
-            "high": 2.0,
-        }
 
         severity_scores = {
             severity: 0.0
-            for severity in SEVERITY_ORDER
+            for severity
+            in SEVERITY_ORDER
         }
 
-        for result in valid:
-            severity = result["severity"]
+        for result in valid_results:
+            severity = result[
+                "severity"
+            ]
 
-            severity_scores[severity] += (
-                confidence_weight[
-                    result["confidence"]
-                ]
-            )
+            confidence = result[
+                "confidence"
+            ]
+
+            severity_scores[
+                severity
+            ] += CONFIDENCE_WEIGHT[
+                confidence
+            ]
 
         winning_severity = max(
             severity_scores,
             key=lambda severity: (
-                severity_scores[severity],
-                SEVERITY_ORDER[severity],
+                severity_scores[
+                    severity
+                ],
+                SEVERITY_ORDER[
+                    severity
+                ],
             ),
         )
 
-        agreement_count = sum(
-            1
-            for result in valid
-            if result["severity"] == winning_severity
-        )
-
-        agreement_score = (
-            agreement_count / len(valid)
-        )
-
-        matching = [
+        matching_results = [
             result
-            for result in valid
-            if result["severity"] == winning_severity
+            for result in valid_results
+            if result["severity"]
+            == winning_severity
         ]
 
+        agreement_score = (
+            len(matching_results)
+            / len(valid_results)
+        )
+
         representative = max(
-            matching or valid,
+            matching_results
+            or valid_results,
             key=lambda result: (
-                confidence_weight[
+                CONFIDENCE_WEIGHT[
                     result["confidence"]
                 ],
-                len(result["evidence"]),
+                len(
+                    result.get(
+                        "evidence",
+                        [],
+                    )
+                ),
             ),
         )
 
-        all_flags = []
+        flag_counts = {}
 
-        for result in valid:
-            for flag in result["flags"]:
-                if flag not in all_flags:
-                    all_flags.append(flag)
+        for result in valid_results:
+            for flag in result.get(
+                "flags",
+                [],
+            ):
+                key = flag.lower().strip()
 
-        evidence_support = {}
+                if not key:
+                    continue
 
-        for result in valid:
-            for evidence in result["evidence"]:
-                key = evidence.lower().strip()
-
-                evidence_support.setdefault(
-                    key,
-                    {
-                        "text": evidence,
+                if key not in flag_counts:
+                    flag_counts[key] = {
+                        "text": flag,
                         "count": 0,
-                    },
+                    }
+
+                flag_counts[
+                    key
+                ]["count"] += 1
+
+        supported_flags = [
+            item["text"]
+            for item in flag_counts.values()
+            if (
+                item["count"] >= 2
+                or len(valid_results) == 1
+            )
+        ]
+
+        evidence_counts = {}
+
+        for result in valid_results:
+            for evidence in result.get(
+                "evidence",
+                [],
+            ):
+                key = (
+                    evidence
+                    .lower()
+                    .strip()
                 )
 
-                evidence_support[key]["count"] += 1
+                if not key:
+                    continue
+
+                if key not in evidence_counts:
+                    evidence_counts[
+                        key
+                    ] = {
+                        "text": evidence,
+                        "count": 0,
+                    }
+
+                evidence_counts[
+                    key
+                ]["count"] += 1
 
         supported_evidence = [
             item["text"]
-            for item in evidence_support.values()
+            for item
+            in evidence_counts.values()
             if item["count"] >= 2
         ]
 
         if not supported_evidence:
             supported_evidence = (
-                representative["evidence"]
+                representative.get(
+                    "evidence",
+                    [],
+                )
             )
 
         limitations = []
 
-        for result in valid:
-            for limitation in result["limitations"]:
-                if limitation not in limitations:
-                    limitations.append(limination)
+        for result in valid_results:
+            for limitation in result.get(
+                "limitations",
+                [],
+            ):
+                if (
+                    limitation
+                    not in limitations
+                ):
+                    limitations.append(
+                        limitation
+                    )
 
-        if agreement_score >= 0.67:
+        if len(valid_results) == 1:
+            consensus_confidence = (
+                valid_results[0][
+                    "confidence"
+                ]
+            )
+
+        elif agreement_score >= 0.67:
             consensus_confidence = "high"
 
         elif agreement_score >= 0.5:
-            consensus_confidence = "medium"
+            consensus_confidence = (
+                "medium"
+            )
 
         else:
             consensus_confidence = "low"
 
-        findings = representative["findings"]
-
-        if supported_evidence:
-            findings = (
-                findings
-                + " Supporting observations: "
-                + "; ".join(supported_evidence)
-            )
-
         return {
-            "findings": findings.strip(),
-            "severity": winning_severity,
-            "confidence": consensus_confidence,
-            "flags": all_flags,
-            "evidence": supported_evidence,
-            "limitations": limitations,
-            "agreement_score": round(
-                agreement_score,
-                3,
-            ),
-            "successful_models": len(valid),
-            "total_models": len(results),
+            "findings":
+                representative[
+                    "findings"
+                ],
+
+            "severity":
+                winning_severity,
+
+            "confidence":
+                consensus_confidence,
+
+            "flags":
+                supported_flags,
+
+            "evidence":
+                supported_evidence,
+
+            "limitations":
+                limitations,
+
+            "agreement_score":
+                round(
+                    agreement_score,
+                    3,
+                ),
+
+            "successful_models":
+                len(valid_results),
+
+            "total_models":
+                len(results),
         }
 
 
