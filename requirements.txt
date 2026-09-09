@@ -8,3 +8,4 @@ pydantic
 open-clip-torch
 timm
 sentencepiece
+protobuf
