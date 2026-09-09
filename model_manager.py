@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+from pathlib import Path
 from typing import Any
 
 import open_clip
@@ -16,12 +17,17 @@ from transformers import (
 )
 
 
-MEDGEMMA_MODEL = "google/medgemma-1.5-4b-it"
+MEDGEMMA_MODEL_ID = "google/medgemma-1.5-4b-it"
 MEDSIGLIP_MODEL = "google/medsiglip-448"
+
 BIOMEDCLIP_MODEL = (
     "hf-hub:"
     "microsoft/"
     "BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
+)
+
+RUNPOD_HF_CACHE_ROOT = Path(
+    "/runpod-volume/huggingface-cache/hub"
 )
 
 SEVERITY_ORDER = {
@@ -47,45 +53,152 @@ def print_disk_usage(label: str):
 
     except Exception as exc:
         print(
-            f"[DISK] Could not read disk usage: {exc}",
+            f"[DISK] Unable to read disk usage: {exc}",
             flush=True,
         )
 
 
-def print_runpod_model_env():
-    """
-    Print possible RunPod / Hugging Face model cache paths.
+def print_directory_status(path: Path):
+    print(
+        f"[PATH] Checking: {path}",
+        flush=True,
+    )
 
-    This is temporary diagnostic logging so we can determine
-    where RunPod places the cached MedGemma model.
+    print(
+        f"[PATH] Exists: {path.exists()}",
+        flush=True,
+    )
+
+    if path.exists():
+        try:
+            entries = list(path.iterdir())
+
+            print(
+                f"[PATH] Items: {len(entries)}",
+                flush=True,
+            )
+
+            for entry in entries[:10]:
+                print(
+                    f"[PATH]   {entry}",
+                    flush=True,
+                )
+
+        except Exception as exc:
+            print(
+                f"[PATH] Unable to list directory: {exc}",
+                flush=True,
+            )
+
+
+def resolve_cached_medgemma_path() -> str:
+    """
+    Find MedGemma inside RunPod's cached Hugging Face model storage.
+
+    Expected Hugging Face cache layout:
+
+    /runpod-volume/huggingface-cache/hub/
+        models--google--medgemma-1.5-4b-it/
+            refs/
+            snapshots/
+                <commit hash>/
     """
 
-    keys = [
-        "RUNPOD_MODEL_PATH",
-        "RUNPOD_MODEL_NAME",
-        "MODEL_PATH",
-        "HF_HOME",
-        "HF_HUB_CACHE",
-        "TRANSFORMERS_CACHE",
-    ]
+    model_directory = (
+        RUNPOD_HF_CACHE_ROOT
+        / "models--google--medgemma-1.5-4b-it"
+    )
 
     print(
         "\n"
         "==============================\n"
-        "RUNPOD MODEL ENVIRONMENT\n"
+        "RESOLVING CACHED MEDGEMMA\n"
         "==============================",
         flush=True,
     )
 
-    for key in keys:
-        print(
-            f"{key}={os.getenv(key)}",
-            flush=True,
+    print_directory_status(
+        RUNPOD_HF_CACHE_ROOT
+    )
+
+    print_directory_status(
+        model_directory
+    )
+
+    if not model_directory.exists():
+        raise RuntimeError(
+            "RunPod cached MedGemma directory was not found at "
+            f"{model_directory}"
         )
 
-    print(
-        "==============================\n",
-        flush=True,
+    refs_main = (
+        model_directory
+        / "refs"
+        / "main"
+    )
+
+    snapshots_directory = (
+        model_directory
+        / "snapshots"
+    )
+
+    # Preferred method:
+    # read the Hugging Face refs/main pointer.
+    if refs_main.exists():
+        snapshot_hash = (
+            refs_main
+            .read_text()
+            .strip()
+        )
+
+        snapshot_path = (
+            snapshots_directory
+            / snapshot_hash
+        )
+
+        if snapshot_path.exists():
+            print(
+                "[MEDGEMMA CACHE] "
+                f"Using snapshot: {snapshot_path}",
+                flush=True,
+            )
+
+            return str(
+                snapshot_path
+            )
+
+    # Fallback:
+    # use an available snapshot directory.
+    if snapshots_directory.exists():
+        snapshots = [
+            path
+            for path in snapshots_directory.iterdir()
+            if path.is_dir()
+        ]
+
+        if snapshots:
+            snapshots.sort(
+                key=lambda path:
+                    path.stat().st_mtime,
+                reverse=True,
+            )
+
+            snapshot_path = snapshots[0]
+
+            print(
+                "[MEDGEMMA CACHE] "
+                "refs/main unavailable. "
+                f"Using snapshot: {snapshot_path}",
+                flush=True,
+            )
+
+            return str(
+                snapshot_path
+            )
+
+    raise RuntimeError(
+        "MedGemma cache directory exists, "
+        "but no snapshot was found."
     )
 
 
@@ -97,10 +210,27 @@ class MedicalModelManager:
             else "cpu"
         )
 
-        print_runpod_model_env()
+        print(
+            "\n"
+            "==============================\n"
+            "MEDICAL MODEL MANAGER\n"
+            "==============================",
+            flush=True,
+        )
 
         print(
             f"[MODEL] Device: {self.device}",
+            flush=True,
+        )
+
+        print(
+            f"[MODEL] MedGemma ID: {MEDGEMMA_MODEL_ID}",
+            flush=True,
+        )
+
+        print(
+            f"[MODEL] RunPod cache root: "
+            f"{RUNPOD_HF_CACHE_ROOT}",
             flush=True,
         )
 
@@ -110,7 +240,9 @@ class MedicalModelManager:
 
     @staticmethod
     def _hf_token():
-        return os.getenv("HF_TOKEN")
+        return os.getenv(
+            "HF_TOKEN"
+        )
 
     @staticmethod
     def _images(
@@ -179,7 +311,9 @@ Context:
             )
 
         data = json.loads(
-            text[start:end + 1]
+            text[
+                start:end + 1
+            ]
         )
 
         severity = str(
@@ -277,39 +411,40 @@ Context:
         max_tokens: int,
     ) -> dict[str, Any]:
 
-        token = self._hf_token()
-
         print(
-            "\n[MEDGEMMA] Starting",
-            flush=True,
-        )
-
-        print(
-            f"[MEDGEMMA] Model source: {MEDGEMMA_MODEL}",
-            flush=True,
-        )
-
-        print(
-            "[MEDGEMMA] Loading processor...",
+            "\n"
+            "==============================\n"
+            "MEDGEMMA\n"
+            "==============================",
             flush=True,
         )
 
         print_disk_usage(
-            "MEDGEMMA BEFORE PROCESSOR"
+            "BEFORE MEDGEMMA"
         )
 
-        processor = AutoProcessor.from_pretrained(
-            MEDGEMMA_MODEL,
-            token=token,
+        # IMPORTANT:
+        # MedGemma is loaded from RunPod's
+        # pre-cached model directory.
+        local_model_path = (
+            resolve_cached_medgemma_path()
+        )
+
+        print(
+            "[MEDGEMMA] "
+            f"Loading locally from: {local_model_path}",
+            flush=True,
+        )
+
+        processor = (
+            AutoProcessor.from_pretrained(
+                local_model_path,
+                local_files_only=True,
+            )
         )
 
         print(
             "[MEDGEMMA] Processor loaded",
-            flush=True,
-        )
-
-        print(
-            "[MEDGEMMA] Loading model...",
             flush=True,
         )
 
@@ -320,15 +455,17 @@ Context:
         model = (
             AutoModelForMultimodalLM
             .from_pretrained(
-                MEDGEMMA_MODEL,
-                token=token,
+                local_model_path,
                 dtype=torch.bfloat16,
                 device_map="auto",
+                local_files_only=True,
             )
         )
 
+        model.eval()
+
         print(
-            "[MEDGEMMA] Model loaded",
+            "[MEDGEMMA] Model loaded from cache",
             flush=True,
         )
 
@@ -427,8 +564,10 @@ Context:
             flush=True,
         )
 
-        result = self._parse_json(
-            text
+        result = (
+            self._parse_json(
+                text
+            )
         )
 
         del output
@@ -453,12 +592,16 @@ Context:
         token = self._hf_token()
 
         print(
-            "\n[MEDSIGLIP] Starting",
+            "\n"
+            "==============================\n"
+            "MEDSIGLIP\n"
+            "==============================",
             flush=True,
         )
 
         print(
-            "[MEDSIGLIP] Loading processor...",
+            "[MEDSIGLIP] "
+            "This model is downloaded at runtime.",
             flush=True,
         )
 
@@ -478,9 +621,8 @@ Context:
             flush=True,
         )
 
-        print(
-            "[MEDSIGLIP] Loading model...",
-            flush=True,
+        print_disk_usage(
+            "MEDSIGLIP BEFORE MODEL LOAD"
         )
 
         model = (
@@ -515,9 +657,11 @@ Context:
             "poor image quality",
         ]
 
-        image = self._images(
-            images
-        )[0]
+        image = (
+            self._images(
+                images
+            )[0]
+        )
 
         inputs = processor(
             images=image,
@@ -552,7 +696,8 @@ Context:
                 labels,
                 probabilities.tolist(),
             ),
-            key=lambda item: item[1],
+            key=lambda item:
+                item[1],
             reverse=True,
         )
 
@@ -590,7 +735,16 @@ Context:
     ) -> dict[str, Any]:
 
         print(
-            "\n[BIOMEDCLIP] Starting",
+            "\n"
+            "==============================\n"
+            "BIOMEDCLIP\n"
+            "==============================",
+            flush=True,
+        )
+
+        print(
+            "[BIOMEDCLIP] "
+            "This model is downloaded at runtime.",
             flush=True,
         )
 
@@ -695,7 +849,8 @@ Context:
                 labels,
                 scores.tolist(),
             ),
-            key=lambda item: item[1],
+            key=lambda item:
+                item[1],
             reverse=True,
         )
 
@@ -748,9 +903,9 @@ Context:
             "ANALYSIS START"
         )
 
-        # --------------------------------
+        # -------------------------
         # 1. MedGemma
-        # --------------------------------
+        # -------------------------
 
         try:
             print(
@@ -758,16 +913,12 @@ Context:
                 flush=True,
             )
 
-            print_disk_usage(
-                "BEFORE MEDGEMMA"
-            )
-
-            results["medgemma"] = (
-                self.run_medgemma(
-                    images=images,
-                    prompt=prompt,
-                    max_tokens=max_tokens,
-                )
+            results[
+                "medgemma"
+            ] = self.run_medgemma(
+                images=images,
+                prompt=prompt,
+                max_tokens=max_tokens,
             )
 
             print(
@@ -775,30 +926,27 @@ Context:
                 flush=True,
             )
 
-            print_disk_usage(
-                "AFTER MEDGEMMA"
-            )
-
         except Exception as exc:
-
             print(
                 f"[1/3] MedGemma FAILED: {exc}",
                 flush=True,
             )
 
-            results["medgemma"] = {
+            results[
+                "medgemma"
+            ] = {
                 "error": str(exc)
             }
 
             self._cleanup_gpu()
 
-            print_disk_usage(
-                "MEDGEMMA FAILED"
-            )
+        print_disk_usage(
+            "AFTER MEDGEMMA ATTEMPT"
+        )
 
-        # --------------------------------
+        # -------------------------
         # 2. MedSigLIP
-        # --------------------------------
+        # -------------------------
 
         try:
             print(
@@ -806,14 +954,10 @@ Context:
                 flush=True,
             )
 
-            print_disk_usage(
-                "BEFORE MEDSIGLIP"
-            )
-
-            results["medsiglip"] = (
-                self.run_medsiglip(
-                    images=images
-                )
+            results[
+                "medsiglip"
+            ] = self.run_medsiglip(
+                images=images
             )
 
             print(
@@ -821,30 +965,27 @@ Context:
                 flush=True,
             )
 
-            print_disk_usage(
-                "AFTER MEDSIGLIP"
-            )
-
         except Exception as exc:
-
             print(
                 f"[2/3] MedSigLIP FAILED: {exc}",
                 flush=True,
             )
 
-            results["medsiglip"] = {
+            results[
+                "medsiglip"
+            ] = {
                 "error": str(exc)
             }
 
             self._cleanup_gpu()
 
-            print_disk_usage(
-                "MEDSIGLIP FAILED"
-            )
+        print_disk_usage(
+            "AFTER MEDSIGLIP ATTEMPT"
+        )
 
-        # --------------------------------
+        # -------------------------
         # 3. BiomedCLIP
-        # --------------------------------
+        # -------------------------
 
         try:
             print(
@@ -852,14 +993,10 @@ Context:
                 flush=True,
             )
 
-            print_disk_usage(
-                "BEFORE BIOMEDCLIP"
-            )
-
-            results["biomedclip"] = (
-                self.run_biomedclip(
-                    images=images
-                )
+            results[
+                "biomedclip"
+            ] = self.run_biomedclip(
+                images=images
             )
 
             print(
@@ -867,26 +1004,23 @@ Context:
                 flush=True,
             )
 
-            print_disk_usage(
-                "AFTER BIOMEDCLIP"
-            )
-
         except Exception as exc:
-
             print(
                 f"[3/3] BiomedCLIP FAILED: {exc}",
                 flush=True,
             )
 
-            results["biomedclip"] = {
+            results[
+                "biomedclip"
+            ] = {
                 "error": str(exc)
             }
 
             self._cleanup_gpu()
 
-            print_disk_usage(
-                "BIOMEDCLIP FAILED"
-            )
+        print_disk_usage(
+            "ANALYSIS COMPLETE"
+        )
 
         print(
             "\n"
@@ -894,10 +1028,6 @@ Context:
             "ENSEMBLE COMPLETE\n"
             "==============================",
             flush=True,
-        )
-
-        print_disk_usage(
-            "ANALYSIS COMPLETE"
         )
 
         return results
@@ -964,8 +1094,10 @@ Context:
 
                 if score >= 0.25:
 
-                    label = item.get(
-                        "label"
+                    label = (
+                        item.get(
+                            "label"
+                        )
                     )
 
                     if label:
