@@ -18,6 +18,7 @@ from transformers import (
 
 
 MEDGEMMA_MODEL_ID = "google/medgemma-1.5-4b-it"
+
 MEDSIGLIP_MODEL = "google/medsiglip-448"
 
 BIOMEDCLIP_MODEL = (
@@ -58,78 +59,15 @@ def print_disk_usage(label: str):
         )
 
 
-def print_directory_status(path: Path):
-    print(
-        f"[PATH] Checking: {path}",
-        flush=True,
-    )
-
-    print(
-        f"[PATH] Exists: {path.exists()}",
-        flush=True,
-    )
-
-    if path.exists():
-        try:
-            entries = list(path.iterdir())
-
-            print(
-                f"[PATH] Items: {len(entries)}",
-                flush=True,
-            )
-
-            for entry in entries[:10]:
-                print(
-                    f"[PATH]   {entry}",
-                    flush=True,
-                )
-
-        except Exception as exc:
-            print(
-                f"[PATH] Unable to list directory: {exc}",
-                flush=True,
-            )
-
-
 def resolve_cached_medgemma_path() -> str:
     """
-    Find MedGemma inside RunPod's cached Hugging Face model storage.
-
-    Expected Hugging Face cache layout:
-
-    /runpod-volume/huggingface-cache/hub/
-        models--google--medgemma-1.5-4b-it/
-            refs/
-            snapshots/
-                <commit hash>/
+    Resolve MedGemma from RunPod cached model storage.
     """
 
     model_directory = (
         RUNPOD_HF_CACHE_ROOT
         / "models--google--medgemma-1.5-4b-it"
     )
-
-    print(
-        "\n"
-        "==============================\n"
-        "RESOLVING CACHED MEDGEMMA\n"
-        "==============================",
-        flush=True,
-    )
-
-    print_directory_status(
-        RUNPOD_HF_CACHE_ROOT
-    )
-
-    print_directory_status(
-        model_directory
-    )
-
-    if not model_directory.exists():
-        raise RuntimeError(
-            "RunPod cached MedGemma directory was not found at "
-            f"{model_directory}"
-        )
 
     refs_main = (
         model_directory
@@ -142,8 +80,12 @@ def resolve_cached_medgemma_path() -> str:
         / "snapshots"
     )
 
-    # Preferred method:
-    # read the Hugging Face refs/main pointer.
+    if not model_directory.exists():
+        raise RuntimeError(
+            "RunPod cached MedGemma directory was not found at "
+            f"{model_directory}"
+        )
+
     if refs_main.exists():
         snapshot_hash = (
             refs_main
@@ -167,8 +109,6 @@ def resolve_cached_medgemma_path() -> str:
                 snapshot_path
             )
 
-    # Fallback:
-    # use an available snapshot directory.
     if snapshots_directory.exists():
         snapshots = [
             path
@@ -187,8 +127,7 @@ def resolve_cached_medgemma_path() -> str:
 
             print(
                 "[MEDGEMMA CACHE] "
-                "refs/main unavailable. "
-                f"Using snapshot: {snapshot_path}",
+                f"Using latest snapshot: {snapshot_path}",
                 flush=True,
             )
 
@@ -211,26 +150,7 @@ class MedicalModelManager:
         )
 
         print(
-            "\n"
-            "==============================\n"
-            "MEDICAL MODEL MANAGER\n"
-            "==============================",
-            flush=True,
-        )
-
-        print(
             f"[MODEL] Device: {self.device}",
-            flush=True,
-        )
-
-        print(
-            f"[MODEL] MedGemma ID: {MEDGEMMA_MODEL_ID}",
-            flush=True,
-        )
-
-        print(
-            f"[MODEL] RunPod cache root: "
-            f"{RUNPOD_HF_CACHE_ROOT}",
             flush=True,
         )
 
@@ -277,6 +197,9 @@ Return ONLY valid JSON:
 
 Do not invent medical history.
 Only use visible evidence.
+
+If the image does not contain meaningful medical information,
+state that clearly in findings and limitations.
 
 Context:
 {prompt}
@@ -412,10 +335,7 @@ Context:
     ) -> dict[str, Any]:
 
         print(
-            "\n"
-            "==============================\n"
-            "MEDGEMMA\n"
-            "==============================",
+            "[MEDGEMMA] Starting",
             flush=True,
         )
 
@@ -423,16 +343,13 @@ Context:
             "BEFORE MEDGEMMA"
         )
 
-        # IMPORTANT:
-        # MedGemma is loaded from RunPod's
-        # pre-cached model directory.
         local_model_path = (
             resolve_cached_medgemma_path()
         )
 
         print(
             "[MEDGEMMA] "
-            f"Loading locally from: {local_model_path}",
+            f"Loading from cached path: {local_model_path}",
             flush=True,
         )
 
@@ -441,15 +358,6 @@ Context:
                 local_model_path,
                 local_files_only=True,
             )
-        )
-
-        print(
-            "[MEDGEMMA] Processor loaded",
-            flush=True,
-        )
-
-        print_disk_usage(
-            "MEDGEMMA BEFORE MODEL LOAD"
         )
 
         model = (
@@ -463,15 +371,6 @@ Context:
         )
 
         model.eval()
-
-        print(
-            "[MEDGEMMA] Model loaded from cache",
-            flush=True,
-        )
-
-        print_disk_usage(
-            "MEDGEMMA AFTER MODEL LOAD"
-        )
 
         pil_images = self._images(
             images
@@ -537,11 +436,6 @@ Context:
             ].shape[-1]
         )
 
-        print(
-            "[MEDGEMMA] Generating...",
-            flush=True,
-        )
-
         with torch.inference_mode():
             output = model.generate(
                 **inputs,
@@ -557,11 +451,6 @@ Context:
         text = processor.decode(
             generated,
             skip_special_tokens=True,
-        )
-
-        print(
-            "[MEDGEMMA] Generation complete",
-            flush=True,
         )
 
         result = (
@@ -592,21 +481,12 @@ Context:
         token = self._hf_token()
 
         print(
-            "\n"
-            "==============================\n"
-            "MEDSIGLIP\n"
-            "==============================",
-            flush=True,
-        )
-
-        print(
-            "[MEDSIGLIP] "
-            "This model is downloaded at runtime.",
+            "[MEDSIGLIP] Starting",
             flush=True,
         )
 
         print_disk_usage(
-            "MEDSIGLIP BEFORE PROCESSOR"
+            "MEDSIGLIP BEFORE LOAD"
         )
 
         processor = (
@@ -614,15 +494,6 @@ Context:
                 MEDSIGLIP_MODEL,
                 token=token,
             )
-        )
-
-        print(
-            "[MEDSIGLIP] Processor loaded",
-            flush=True,
-        )
-
-        print_disk_usage(
-            "MEDSIGLIP BEFORE MODEL LOAD"
         )
 
         model = (
@@ -637,15 +508,6 @@ Context:
         )
 
         model.eval()
-
-        print(
-            "[MEDSIGLIP] Model loaded",
-            flush=True,
-        )
-
-        print_disk_usage(
-            "MEDSIGLIP AFTER MODEL LOAD"
-        )
 
         labels = [
             "normal medical appearance",
@@ -735,16 +597,7 @@ Context:
     ) -> dict[str, Any]:
 
         print(
-            "\n"
-            "==============================\n"
-            "BIOMEDCLIP\n"
-            "==============================",
-            flush=True,
-        )
-
-        print(
-            "[BIOMEDCLIP] "
-            "This model is downloaded at runtime.",
+            "[BIOMEDCLIP] Starting",
             flush=True,
         )
 
@@ -770,15 +623,6 @@ Context:
         )
 
         model.eval()
-
-        print(
-            "[BIOMEDCLIP] Model loaded",
-            flush=True,
-        )
-
-        print_disk_usage(
-            "BIOMEDCLIP AFTER LOAD"
-        )
 
         labels = [
             "normal medical image",
@@ -891,28 +735,11 @@ Context:
 
         results = {}
 
-        print(
-            "\n"
-            "==============================\n"
-            "STARTING MEDICAL ENSEMBLE\n"
-            "==============================",
-            flush=True,
-        )
-
         print_disk_usage(
             "ANALYSIS START"
         )
 
-        # -------------------------
-        # 1. MedGemma
-        # -------------------------
-
         try:
-            print(
-                "\n[1/3] Starting MedGemma",
-                flush=True,
-            )
-
             results[
                 "medgemma"
             ] = self.run_medgemma(
@@ -921,17 +748,7 @@ Context:
                 max_tokens=max_tokens,
             )
 
-            print(
-                "[1/3] MedGemma SUCCESS",
-                flush=True,
-            )
-
         except Exception as exc:
-            print(
-                f"[1/3] MedGemma FAILED: {exc}",
-                flush=True,
-            )
-
             results[
                 "medgemma"
             ] = {
@@ -941,36 +758,17 @@ Context:
             self._cleanup_gpu()
 
         print_disk_usage(
-            "AFTER MEDGEMMA ATTEMPT"
+            "AFTER MEDGEMMA"
         )
 
-        # -------------------------
-        # 2. MedSigLIP
-        # -------------------------
-
         try:
-            print(
-                "\n[2/3] Starting MedSigLIP",
-                flush=True,
-            )
-
             results[
                 "medsiglip"
             ] = self.run_medsiglip(
                 images=images
             )
 
-            print(
-                "[2/3] MedSigLIP SUCCESS",
-                flush=True,
-            )
-
         except Exception as exc:
-            print(
-                f"[2/3] MedSigLIP FAILED: {exc}",
-                flush=True,
-            )
-
             results[
                 "medsiglip"
             ] = {
@@ -980,36 +778,17 @@ Context:
             self._cleanup_gpu()
 
         print_disk_usage(
-            "AFTER MEDSIGLIP ATTEMPT"
+            "AFTER MEDSIGLIP"
         )
 
-        # -------------------------
-        # 3. BiomedCLIP
-        # -------------------------
-
         try:
-            print(
-                "\n[3/3] Starting BiomedCLIP",
-                flush=True,
-            )
-
             results[
                 "biomedclip"
             ] = self.run_biomedclip(
                 images=images
             )
 
-            print(
-                "[3/3] BiomedCLIP SUCCESS",
-                flush=True,
-            )
-
         except Exception as exc:
-            print(
-                f"[3/3] BiomedCLIP FAILED: {exc}",
-                flush=True,
-            )
-
             results[
                 "biomedclip"
             ] = {
@@ -1020,14 +799,6 @@ Context:
 
         print_disk_usage(
             "ANALYSIS COMPLETE"
-        )
-
-        print(
-            "\n"
-            "==============================\n"
-            "ENSEMBLE COMPLETE\n"
-            "==============================",
-            flush=True,
         )
 
         return results
@@ -1052,16 +823,93 @@ Context:
                     results,
             }
 
-        supporting_labels = []
+        findings = (
+            medgemma.get(
+                "findings",
+                "",
+            )
+        )
 
-        for name in [
+        severity = (
+            medgemma.get(
+                "severity",
+                "normal",
+            )
+        )
+
+        confidence = (
+            medgemma.get(
+                "confidence",
+                "low",
+            )
+        )
+
+        findings_lower = (
+            findings.lower()
+        )
+
+        non_medical_phrases = [
+            "does not provide any medical information",
+            "no medical information",
+            "not a medical image",
+            "no interpretable medical",
+            "no visible medical",
+            "does not contain medical",
+            "does not provide medical",
+            "no meaningful medical",
+        ]
+
+        is_non_medical = any(
+            phrase in findings_lower
+            for phrase in non_medical_phrases
+        )
+
+        if is_non_medical:
+            return {
+                "findings":
+                    findings,
+
+                "severity":
+                    "normal",
+
+                "confidence":
+                    "low",
+
+                "flags":
+                    [],
+
+                "evidence":
+                    medgemma.get(
+                        "evidence",
+                        [],
+                    ),
+
+                "limitations":
+                    medgemma.get(
+                        "limitations",
+                        [],
+                    ),
+
+                "supporting_labels":
+                    [],
+
+                "model_agreement":
+                    "not_applicable",
+
+                "model_results":
+                    results,
+            }
+
+        lightweight_results = {}
+
+        for model_name in [
             "medsiglip",
             "biomedclip",
         ]:
 
             model_result = (
                 results.get(
-                    name,
+                    model_name,
                     {},
                 )
             )
@@ -1070,6 +918,8 @@ Context:
                 "error"
             ):
                 continue
+
+            valid_labels = []
 
             for item in (
                 model_result.get(
@@ -1092,51 +942,78 @@ Context:
                 ):
                     continue
 
-                if score >= 0.25:
+                label = (
+                    item.get(
+                        "label"
+                    )
+                )
 
-                    label = (
-                        item.get(
-                            "label"
-                        )
+                if (
+                    label
+                    and score >= 0.40
+                ):
+                    valid_labels.append(
+                        {
+                            "label":
+                                label,
+
+                            "score":
+                                score,
+                        }
                     )
 
-                    if label:
-                        supporting_labels.append(
-                            label
-                        )
+            lightweight_results[
+                model_name
+            ] = valid_labels
 
-        supporting_labels = list(
-            dict.fromkeys(
-                supporting_labels
+        medsiglip_labels = {
+            item["label"]
+            for item in (
+                lightweight_results.get(
+                    "medsiglip",
+                    [],
+                )
             )
+        }
+
+        biomedclip_labels = {
+            item["label"]
+            for item in (
+                lightweight_results.get(
+                    "biomedclip",
+                    [],
+                )
+            )
+        }
+
+        agreed_labels = (
+            medsiglip_labels
+            & biomedclip_labels
         )
 
-        confidence = (
-            medgemma.get(
-                "confidence",
-                "low",
-            )
+        supporting_labels = sorted(
+            agreed_labels
         )
 
-        severity = (
-            medgemma.get(
-                "severity",
-                "normal",
+        if supporting_labels:
+            model_agreement = (
+                "agreement"
             )
-        )
+        else:
+            model_agreement = (
+                "limited"
+            )
 
         if (
             severity != "normal"
             and not supporting_labels
+            and confidence == "high"
         ):
-            confidence = "low"
+            confidence = "medium"
 
         return {
             "findings":
-                medgemma.get(
-                    "findings",
-                    "",
-                ),
+                findings,
 
             "severity":
                 severity,
@@ -1164,6 +1041,9 @@ Context:
 
             "supporting_labels":
                 supporting_labels,
+
+            "model_agreement":
+                model_agreement,
 
             "model_results":
                 results,

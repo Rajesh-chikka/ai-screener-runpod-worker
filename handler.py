@@ -39,7 +39,15 @@ def decode_image(value: str) -> bytes:
 
 def validate_input(
     job_input: dict[str, Any],
-) -> tuple[str, list[str], int]:
+) -> tuple[str, list[Any], int]:
+
+    if not isinstance(
+        job_input,
+        dict,
+    ):
+        raise ValueError(
+            "job input must be an object"
+        )
 
     prompt = str(
         job_input.get(
@@ -48,19 +56,25 @@ def validate_input(
         )
     ).strip()
 
-    raw_images = (
-        job_input.get(
-            "images"
-        )
-        or []
+    raw_images = job_input.get(
+        "images"
     )
 
-    max_tokens = int(
-        job_input.get(
-            "max_tokens",
-            DEFAULT_MAX_TOKENS,
+    try:
+        max_tokens = int(
+            job_input.get(
+                "max_tokens",
+                DEFAULT_MAX_TOKENS,
+            )
         )
-    )
+
+    except (
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise ValueError(
+            "max_tokens must be an integer"
+        ) from exc
 
     if not prompt:
         raise ValueError(
@@ -102,10 +116,7 @@ def validate_input(
 
 def handler(job):
     try:
-        job_input = (
-            job.get("input")
-            or {}
-        )
+        job_input = job["input"]
 
         (
             prompt,
@@ -186,6 +197,11 @@ def handler(job):
                 "supporting_labels":
                     consensus[
                         "supporting_labels"
+                    ],
+
+                "model_agreement":
+                    consensus[
+                        "model_agreement"
                     ],
             },
 
