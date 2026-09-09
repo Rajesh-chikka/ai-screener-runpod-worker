@@ -40,7 +40,6 @@ def decode_image(value: str) -> bytes:
 def validate_input(
     job_input: dict[str, Any],
 ) -> tuple[str, list[str], int]:
-
     prompt = str(
         job_input.get("prompt", "")
     ).strip()
@@ -125,6 +124,7 @@ def handler(job):
             return {
                 "error": consensus["error"],
                 "models": model_results,
+                "image_count": len(images),
             }
 
         return {
@@ -135,27 +135,11 @@ def handler(job):
                 "flags": consensus["flags"],
                 "evidence": consensus["evidence"],
                 "limitations": consensus["limitations"],
+                "supporting_labels": consensus[
+                    "supporting_labels"
+                ],
             },
-
-            "ensemble": {
-                "agreement_score":
-                    consensus[
-                        "agreement_score"
-                    ],
-
-                "successful_models":
-                    consensus[
-                        "successful_models"
-                    ],
-
-                "total_models":
-                    consensus[
-                        "total_models"
-                    ],
-            },
-
             "models": model_results,
-
             "image_count": len(images),
         }
 
@@ -165,6 +149,8 @@ def handler(job):
         }
 
 
-runpod.serverless.start({
-    "handler": handler
-})
+runpod.serverless.start(
+    {
+        "handler": handler
+    }
+)

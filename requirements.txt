@@ -1,9 +1,9 @@
 runpod
-transformers==4.57.1
-accelerate==1.12.0
+transformers>=5.0.0
+accelerate
 safetensors
 pillow
 huggingface_hub
 pydantic
-qwen-vl-utils==0.0.14
-torchvision==0.24.1
+open-clip-torch
+timm
