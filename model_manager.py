@@ -189,23 +189,17 @@ You are analyzing a medical screening image.
 
 This is screening support only and is not a confirmed diagnosis.
 
-Your entire response MUST be exactly one valid JSON object.
+Your entire response MUST be exactly one valid JSON object with these keys:
+findings, severity, confidence, flags, evidence, limitations.
 
 Do not use Markdown.
 Do not use ```json.
 Do not write anything before the JSON.
 Do not write anything after the JSON.
-
-Use exactly this schema:
-
-{{
-  "findings": "concise description of visible findings",
-  "severity": "unknown",
-  "confidence": "low",
-  "flags": [],
-  "evidence": [],
-  "limitations": []
-}}
+Do not include chain-of-thought.
+Do not include explanations outside the JSON object.
+Do not use headings such as FINDINGS:.
+Do not repeat the schema.
 
 Allowed severity values:
 "normal", "low", "moderate", "high", "unknown"
@@ -306,6 +300,288 @@ Return JSON only.
             )
 
         return items
+
+    @staticmethod
+    def _limited_unique_string_list(
+        values: list[str],
+        limit: int,
+    ) -> list[str]:
+
+        items = []
+        seen = set()
+
+        for value in values:
+            text = str(
+                value
+            ).strip()
+
+            if not text or text == "[]":
+                continue
+
+            key = text.lower()
+
+            if key in seen:
+                continue
+
+            seen.add(
+                key
+            )
+
+            items.append(
+                text
+            )
+
+            if len(items) >= limit:
+                break
+
+        return items
+
+    @staticmethod
+    def _is_demographic_limitation(
+        text: str,
+    ) -> bool:
+
+        lower_text = text.lower()
+
+        demographic_terms = [
+            "age",
+            "ethnicity",
+            "race",
+            "racial",
+            "demographic",
+        ]
+
+        return any(
+            term in lower_text
+            for term in demographic_terms
+        )
+
+    @staticmethod
+    def _plain_text_sections(
+        text: str,
+    ) -> dict[str, str]:
+
+        header_pattern = re.compile(
+            r"(?im)^\s*"
+            r"(findings|severity|confidence|flags|evidence|limitations)"
+            r"\s*:\s*"
+        )
+
+        matches = list(
+            header_pattern.finditer(
+                text
+            )
+        )
+
+        if not matches:
+            return {}
+
+        sections = {}
+
+        for index, match in enumerate(
+            matches
+        ):
+            name = (
+                match.group(1)
+                .lower()
+            )
+
+            start = match.end()
+
+            if index + 1 < len(matches):
+                end = matches[
+                    index + 1
+                ].start()
+            else:
+                end = len(text)
+
+            sections[name] = text[
+                start:end
+            ].strip()
+
+        return sections
+
+    @staticmethod
+    def _plain_text_list(
+        text: str,
+    ) -> list[str]:
+
+        if not text or text.strip() == "[]":
+            return []
+
+        lines = [
+            line.strip()
+            for line in text.splitlines()
+        ]
+
+        items = []
+        current_item = None
+
+        for line in lines:
+            if not line:
+                continue
+
+            bullet = re.match(
+                r"^[-*]\s+(.*)$",
+                line,
+            )
+
+            if bullet:
+                if current_item:
+                    items.append(
+                        current_item
+                    )
+
+                current_item = (
+                    bullet.group(1)
+                    .strip()
+                )
+
+            elif current_item:
+                current_item = (
+                    current_item
+                    + " "
+                    + line
+                ).strip()
+
+            else:
+                items.append(
+                    line
+                )
+
+        if current_item:
+            items.append(
+                current_item
+            )
+
+        return items
+
+    @staticmethod
+    def _plain_text_scalar(
+        text: str,
+    ) -> str:
+
+        for line in text.splitlines():
+            value = (
+                line.strip()
+                .strip("-* ")
+                .strip()
+            )
+
+            if value:
+                return value
+
+        return ""
+
+    @classmethod
+    def _parse_sectioned_plain_text(
+        cls,
+        text: str,
+    ) -> dict[str, Any] | None:
+
+        sections = cls._plain_text_sections(
+            text,
+        )
+
+        if not sections:
+            return None
+
+        section_names = set(
+            sections
+        )
+
+        if "findings" not in section_names or not (
+            section_names
+            & {
+                "severity",
+                "confidence",
+                "flags",
+                "evidence",
+                "limitations",
+            }
+        ):
+            return None
+
+        severity = (
+            cls._plain_text_scalar(
+                sections.get(
+                    "severity",
+                    "",
+                )
+            ).lower()
+        )
+
+        if severity not in SEVERITY_ORDER:
+            severity = "unknown"
+
+        confidence = (
+            cls._plain_text_scalar(
+                sections.get(
+                    "confidence",
+                    "",
+                )
+            ).lower()
+        )
+
+        if confidence not in {
+            "low",
+            "medium",
+            "high",
+        }:
+            confidence = "low"
+
+        return {
+            "findings":
+                sections.get(
+                    "findings",
+                    "",
+                ).strip(),
+
+            "severity":
+                severity,
+
+            "confidence":
+                confidence,
+
+            "flags":
+                cls._limited_unique_string_list(
+                    cls._plain_text_list(
+                        sections.get(
+                            "flags",
+                            "",
+                        )
+                    ),
+                    6,
+                ),
+
+            "evidence":
+                cls._limited_unique_string_list(
+                    cls._plain_text_list(
+                        sections.get(
+                            "evidence",
+                            "",
+                        )
+                    ),
+                    5,
+                ),
+
+            "limitations":
+                cls._limited_unique_string_list(
+                    [
+                        item
+                        for item in cls._plain_text_list(
+                            sections.get(
+                                "limitations",
+                                "",
+                            )
+                        )
+                        if not cls._is_demographic_limitation(
+                            item
+                        )
+                    ],
+                    3,
+                ),
+        }
 
     @classmethod
     def _parse_malformed_json(
@@ -427,14 +703,32 @@ Return JSON only.
                 "does not contain medical",
                 "does not provide medical",
                 "no meaningful medical",
-                "cannot assess",
-                "unable to assess",
             ]
 
             is_non_medical = any(
                 phrase in lower_text
                 for phrase in non_medical_phrases
             )
+
+            looks_like_json = (
+                start != -1
+                or end != -1
+            )
+
+            if (
+                not is_non_medical
+                and looks_like_json
+            ):
+                return cls._parse_malformed_json(
+                    cleaned,
+                )
+
+            sectioned_data = cls._parse_sectioned_plain_text(
+                cleaned,
+            )
+
+            if sectioned_data is not None:
+                return sectioned_data
 
             if not is_non_medical:
                 return cls._parse_malformed_json(
