@@ -33,6 +33,7 @@ RUNPOD_HF_CACHE_ROOT = Path(
 )
 
 SEVERITY_ORDER = {
+    "unknown": -1,
     "normal": 0,
     "low": 1,
     "moderate": 2,
@@ -199,7 +200,7 @@ Use exactly this schema:
 
 {{
   "findings": "concise description of visible findings",
-  "severity": "normal",
+  "severity": "unknown",
   "confidence": "low",
   "flags": [],
   "evidence": [],
@@ -207,7 +208,7 @@ Use exactly this schema:
 }}
 
 Allowed severity values:
-"normal", "low", "moderate", "high"
+"normal", "low", "moderate", "high", "unknown"
 
 Allowed confidence values:
 "low", "medium", "high"
@@ -307,7 +308,7 @@ Return JSON only.
                 "severity":
                     "normal"
                     if is_non_medical
-                    else "low",
+                    else "unknown",
 
                 "confidence":
                     "low",
@@ -327,12 +328,12 @@ Return JSON only.
         severity = str(
             data.get(
                 "severity",
-                "normal",
+                "unknown",
             )
         ).lower()
 
         if severity not in SEVERITY_ORDER:
-            severity = "normal"
+            severity = "unknown"
 
         confidence = str(
             data.get(
@@ -1058,7 +1059,7 @@ Return JSON only.
         severity = (
             medgemma.get(
                 "severity",
-                "normal",
+                "unknown",
             )
         )
 
