@@ -213,6 +213,13 @@ Allowed severity values:
 Allowed confidence values:
 "low", "medium", "high"
 
+Output limits:
+- findings must be maximum 2 concise sentences
+- flags must be maximum 6 unique items
+- evidence must be maximum 5 unique items
+- limitations must be maximum 3 items
+- do not include duplicate entries
+
 If the image is not medically meaningful:
 - severity must be "normal"
 - confidence must be "low"
@@ -230,7 +237,135 @@ Return JSON only.
 """.strip()
 
     @staticmethod
+    def _json_string_field(
+        text: str,
+        field_name: str,
+    ) -> str | None:
+
+        match = re.search(
+            rf'"{re.escape(field_name)}"\s*:\s*',
+            text,
+        )
+
+        if not match:
+            return None
+
+        decoder = json.JSONDecoder()
+
+        try:
+            value, _ = decoder.raw_decode(
+                text[
+                    match.end():
+                ].lstrip()
+            )
+
+        except json.JSONDecodeError:
+            return None
+
+        if isinstance(
+            value,
+            str,
+        ):
+            return value
+
+        return str(value)
+
+    @staticmethod
+    def _unique_string_list(
+        value: Any,
+    ) -> list[str]:
+
+        if value is None:
+            return []
+
+        if not isinstance(
+            value,
+            list,
+        ):
+            value = [
+                value
+            ]
+
+        items = []
+        seen = set()
+
+        for item in value:
+            text = str(
+                item
+            )
+
+            if text in seen:
+                continue
+
+            seen.add(
+                text
+            )
+
+            items.append(
+                text
+            )
+
+        return items
+
+    @classmethod
+    def _parse_malformed_json(
+        cls,
+        text: str,
+    ) -> dict[str, Any]:
+
+        findings = cls._json_string_field(
+            text,
+            "findings",
+        )
+
+        if findings is not None:
+            return {
+                "findings":
+                    findings.strip(),
+
+                "severity":
+                    "unknown",
+
+                "confidence":
+                    "low",
+
+                "flags":
+                    [],
+
+                "evidence":
+                    [],
+
+                "limitations": [
+                    "The model response was incomplete or malformed; "
+                    "severity could not be reliably determined."
+                ],
+            }
+
+        return {
+            "findings":
+                "The image analysis completed, but the structured "
+                "result could not be parsed reliably.",
+
+            "severity":
+                "unknown",
+
+            "confidence":
+                "low",
+
+            "flags":
+                [],
+
+            "evidence":
+                [],
+
+            "limitations": [
+                "The model response was incomplete or malformed."
+            ],
+        }
+
+    @classmethod
     def _parse_json(
+        cls,
         text: str,
     ) -> dict[str, Any]:
 
@@ -301,14 +436,17 @@ Return JSON only.
                 for phrase in non_medical_phrases
             )
 
+            if not is_non_medical:
+                return cls._parse_malformed_json(
+                    cleaned,
+                )
+
             return {
                 "findings":
                     original_text,
 
                 "severity":
-                    "normal"
-                    if is_non_medical
-                    else "unknown",
+                    "normal",
 
                 "confidence":
                     "low",
@@ -349,44 +487,26 @@ Return JSON only.
         }:
             confidence = "low"
 
-        flags = data.get(
-            "flags",
-            [],
+        flags = cls._unique_string_list(
+            data.get(
+                "flags",
+                [],
+            )
         )
 
-        evidence = data.get(
-            "evidence",
-            [],
+        evidence = cls._unique_string_list(
+            data.get(
+                "evidence",
+                [],
+            )
         )
 
-        limitations = data.get(
-            "limitations",
-            [],
+        limitations = cls._unique_string_list(
+            data.get(
+                "limitations",
+                [],
+            )
         )
-
-        if not isinstance(
-            flags,
-            list,
-        ):
-            flags = [
-                str(flags)
-            ]
-
-        if not isinstance(
-            evidence,
-            list,
-        ):
-            evidence = [
-                str(evidence)
-            ]
-
-        if not isinstance(
-            limitations,
-            list,
-        ):
-            limitations = [
-                str(limitations)
-            ]
 
         return {
             "findings": str(
