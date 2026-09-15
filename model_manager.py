@@ -67,6 +67,7 @@ EARWAX_TYPE_VALUES = {
     "flaky",
     "mixed",
     "ungradable",
+    "not_applicable",
 }
 
 EAR_CANAL_VALUES = {
@@ -248,13 +249,13 @@ Because the request includes an ear checklist, include the ear_checklist key.
 Use these exact nested fields and allowed values:
 - ear_checklist.earwax.amount: none, minimal, visible, occluding, ungradable
 - ear_checklist.earwax.deposit_on_eardrum: yes, no, ungradable
-- ear_checklist.earwax.colour: short visible colour description, or ungradable
-- ear_checklist.earwax.type: wet, dry, flaky, mixed, ungradable
+- ear_checklist.earwax.colour: short free-text visible colour description, ungradable, or not_applicable
+- ear_checklist.earwax.type: wet, dry, flaky, mixed, ungradable, not_applicable
 - ear_checklist.ear_canal.redness_swelling: present, absent, ungradable
 - ear_checklist.ear_canal.bleeding_trauma: present, absent, ungradable
 - ear_checklist.ear_canal.foreign_body_visualised: present, absent, ungradable
 - ear_checklist.eardrum.visibility: yes, partial, no, ungradable
-- ear_checklist.eardrum.colour: short visible colour description, or ungradable
+- ear_checklist.eardrum.colour: short free-text visible colour description, or ungradable
 - ear_checklist.eardrum.intactness: intact, not_intact, ungradable
 - ear_checklist.eardrum.bulging: present, absent, ungradable
 - ear_checklist.eardrum.discharge: present, absent, ungradable
@@ -268,6 +269,13 @@ For ear_checklist:
 - do not infer symptoms or history
 - do not diagnose disease
 - do not fabricate checklist values
+- for colour fields, provide a short free-text description of the colour actually visible in the provided frames
+- do not select colour from a predefined colour list
+- do not infer the expected normal colour
+- if colour cannot be reliably assessed, return ungradable
+- if no earwax is visible, set earwax.amount to none, earwax.colour to not_applicable, and earwax.type to not_applicable
+- if eardrum.visibility is yes or partial, actively inspect whether eardrum.colour is visually assessable
+- do not make eardrum.colour gradable merely because eardrum.visibility is yes or partial
 """.strip()
 
     @staticmethod
@@ -532,15 +540,59 @@ Return JSON only.
         ):
             eardrum = {}
 
+        earwax_amount = cls._normalize_ear_enum(
+            earwax.get(
+                "amount"
+            ),
+            EARWAX_AMOUNT_VALUES,
+        )
+
+        if earwax_amount == "none":
+            earwax_colour = "not_applicable"
+            earwax_type = "not_applicable"
+        else:
+            earwax_colour = cls._normalize_ear_colour(
+                earwax.get(
+                    "colour"
+                )
+            )
+
+            earwax_type = cls._normalize_ear_enum(
+                earwax.get(
+                    "type"
+                ),
+                EARWAX_TYPE_VALUES,
+            )
+
+            if earwax_colour.lower() == "not_applicable":
+                earwax_colour = "ungradable"
+
+            if earwax_type == "not_applicable":
+                earwax_type = "ungradable"
+
+        eardrum_visibility = cls._normalize_ear_enum(
+            eardrum.get(
+                "visibility"
+            ),
+            EARDRUM_VISIBILITY_VALUES,
+        )
+
+        if eardrum_visibility in {
+            "no",
+            "ungradable",
+        }:
+            eardrum_colour = "ungradable"
+        else:
+            eardrum_colour = cls._normalize_ear_colour(
+                eardrum.get(
+                    "colour"
+                )
+            )
+
         return {
             "earwax": {
                 "amount":
-                    cls._normalize_ear_enum(
-                        earwax.get(
-                            "amount"
-                        ),
-                        EARWAX_AMOUNT_VALUES,
-                    ),
+                    earwax_amount,
                 "deposit_on_eardrum":
                     cls._normalize_ear_enum(
                         earwax.get(
@@ -549,18 +601,9 @@ Return JSON only.
                         EARWAX_DEPOSIT_VALUES,
                     ),
                 "colour":
-                    cls._normalize_ear_colour(
-                        earwax.get(
-                            "colour"
-                        )
-                    ),
+                    earwax_colour,
                 "type":
-                    cls._normalize_ear_enum(
-                        earwax.get(
-                            "type"
-                        ),
-                        EARWAX_TYPE_VALUES,
-                    ),
+                    earwax_type,
             },
             "ear_canal": {
                 "redness_swelling":
@@ -587,18 +630,9 @@ Return JSON only.
             },
             "eardrum": {
                 "visibility":
-                    cls._normalize_ear_enum(
-                        eardrum.get(
-                            "visibility"
-                        ),
-                        EARDRUM_VISIBILITY_VALUES,
-                    ),
+                    eardrum_visibility,
                 "colour":
-                    cls._normalize_ear_colour(
-                        eardrum.get(
-                            "colour"
-                        )
-                    ),
+                    eardrum_colour,
                 "intactness":
                     cls._normalize_ear_enum(
                         eardrum.get(
