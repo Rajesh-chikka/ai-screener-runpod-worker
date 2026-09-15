@@ -246,36 +246,12 @@ class MedicalModelManager:
         return """
 Because the request includes an ear checklist, include the ear_checklist key.
 
-Use these exact nested fields and allowed values:
-- ear_checklist.earwax.amount: none, minimal, visible, occluding, ungradable
-- ear_checklist.earwax.deposit_on_eardrum: yes, no, ungradable
-- ear_checklist.earwax.colour: short free-text visible colour description, ungradable, or not_applicable
-- ear_checklist.earwax.type: wet, dry, flaky, mixed, ungradable, not_applicable
-- ear_checklist.ear_canal.redness_swelling: present, absent, ungradable
-- ear_checklist.ear_canal.bleeding_trauma: present, absent, ungradable
-- ear_checklist.ear_canal.foreign_body_visualised: present, absent, ungradable
-- ear_checklist.eardrum.visibility: yes, partial, no, ungradable
-- ear_checklist.eardrum.colour: short free-text visible colour description, or ungradable
-- ear_checklist.eardrum.intactness: intact, not_intact, ungradable
-- ear_checklist.eardrum.bulging: present, absent, ungradable
-- ear_checklist.eardrum.discharge: present, absent, ungradable
-- ear_checklist.eardrum.handle_of_malleus_visibility: yes, partial, no, ungradable
-- ear_checklist.eardrum.cone_of_light_visibility: yes, partial, no, ungradable
-
-For ear_checklist:
-- evaluate only visually observable findings
-- use ungradable when not reliably visible
-- do not infer hidden findings
-- do not infer symptoms or history
-- do not diagnose disease
-- do not fabricate checklist values
-- for colour fields, provide a short free-text description of the colour actually visible in the provided frames
-- do not select colour from a predefined colour list
-- do not infer the expected normal colour
-- if colour cannot be reliably assessed, return ungradable
-- if no earwax is visible, set earwax.amount to none, earwax.colour to not_applicable, and earwax.type to not_applicable
-- if eardrum.visibility is yes or partial, actively inspect whether eardrum.colour is visually assessable
-- do not make eardrum.colour gradable merely because eardrum.visibility is yes or partial
+Assess only what is visibly present in the provided ear frames.
+Evaluate the ear canal and tympanic membrane using the requested checklist.
+If a feature cannot be reliably assessed, return ungradable.
+Do not infer findings that are not clearly visible.
+Do not diagnose disease.
+Return structured JSON only.
 """.strip()
 
     @staticmethod
