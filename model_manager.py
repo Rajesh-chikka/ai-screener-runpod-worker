@@ -40,6 +40,54 @@ SEVERITY_ORDER = {
     "high": 3,
 }
 
+EAR_CHECKLIST_PROMPT_TERMS = (
+    "ear_checklist",
+    "earwax",
+    "eardrum",
+    "tympanic membrane",
+)
+
+EARWAX_AMOUNT_VALUES = {
+    "none",
+    "minimal",
+    "visible",
+    "occluding",
+    "ungradable",
+}
+
+EARWAX_DEPOSIT_VALUES = {
+    "yes",
+    "no",
+    "ungradable",
+}
+
+EARWAX_TYPE_VALUES = {
+    "wet",
+    "dry",
+    "flaky",
+    "mixed",
+    "ungradable",
+}
+
+EAR_CANAL_VALUES = {
+    "present",
+    "absent",
+    "ungradable",
+}
+
+EARDRUM_VISIBILITY_VALUES = {
+    "yes",
+    "partial",
+    "no",
+    "ungradable",
+}
+
+EARDRUM_INTACTNESS_VALUES = {
+    "intact",
+    "not_intact",
+    "ungradable",
+}
+
 
 def print_disk_usage(label: str):
     try:
@@ -180,9 +228,71 @@ class MedicalModelManager:
         ]
 
     @staticmethod
+    def _needs_ear_checklist(
+        prompt: str,
+    ) -> bool:
+
+        lower_prompt = prompt.lower()
+
+        return any(
+            term in lower_prompt
+            for term in EAR_CHECKLIST_PROMPT_TERMS
+        )
+
+    @staticmethod
+    def _ear_checklist_prompt() -> str:
+
+        return """
+Because the request includes an ear checklist, include the ear_checklist key.
+
+Use these exact nested fields and allowed values:
+- ear_checklist.earwax.amount: none, minimal, visible, occluding, ungradable
+- ear_checklist.earwax.deposit_on_eardrum: yes, no, ungradable
+- ear_checklist.earwax.colour: short visible colour description, or ungradable
+- ear_checklist.earwax.type: wet, dry, flaky, mixed, ungradable
+- ear_checklist.ear_canal.redness_swelling: present, absent, ungradable
+- ear_checklist.ear_canal.bleeding_trauma: present, absent, ungradable
+- ear_checklist.ear_canal.foreign_body_visualised: present, absent, ungradable
+- ear_checklist.eardrum.visibility: yes, partial, no, ungradable
+- ear_checklist.eardrum.colour: short visible colour description, or ungradable
+- ear_checklist.eardrum.intactness: intact, not_intact, ungradable
+- ear_checklist.eardrum.bulging: present, absent, ungradable
+- ear_checklist.eardrum.discharge: present, absent, ungradable
+- ear_checklist.eardrum.handle_of_malleus_visibility: yes, partial, no, ungradable
+- ear_checklist.eardrum.cone_of_light_visibility: yes, partial, no, ungradable
+
+For ear_checklist:
+- evaluate only visually observable findings
+- use ungradable when not reliably visible
+- do not infer hidden findings
+- do not infer symptoms or history
+- do not diagnose disease
+- do not fabricate checklist values
+""".strip()
+
+    @staticmethod
     def _analysis_prompt(
         prompt: str,
     ) -> str:
+
+        keys = (
+            "findings, severity, confidence, flags, evidence, limitations"
+        )
+
+        ear_checklist_prompt = ""
+
+        if MedicalModelManager._needs_ear_checklist(
+            prompt
+        ):
+            keys = (
+                keys
+                + ", ear_checklist"
+            )
+
+            ear_checklist_prompt = (
+                "\n\n"
+                + MedicalModelManager._ear_checklist_prompt()
+            )
 
         return f"""
 You are analyzing a medical screening image.
@@ -190,7 +300,7 @@ You are analyzing a medical screening image.
 This is screening support only and is not a confirmed diagnosis.
 
 Your entire response MUST be exactly one valid JSON object with these keys:
-findings, severity, confidence, flags, evidence, limitations.
+{keys}.
 
 Do not use Markdown.
 Do not use ```json.
@@ -223,6 +333,7 @@ If the image is not medically meaningful:
 Do not invent patient history.
 Do not infer facts that are not visible.
 Only use visible image evidence.
+{ear_checklist_prompt}
 
 Context:
 {prompt}
@@ -300,6 +411,248 @@ Return JSON only.
             )
 
         return items
+
+    @staticmethod
+    def _normalize_ear_enum(
+        value: Any,
+        allowed_values: set[str],
+    ) -> str:
+
+        normalized = str(
+            value
+            if value is not None
+            else ""
+        ).strip().lower()
+
+        if normalized in allowed_values:
+            return normalized
+
+        return "ungradable"
+
+    @staticmethod
+    def _normalize_ear_colour(
+        value: Any,
+    ) -> str:
+
+        normalized = " ".join(
+            str(
+                value
+                if value is not None
+                else ""
+            ).split()
+        )
+
+        if normalized:
+            return normalized
+
+        return "ungradable"
+
+    @staticmethod
+    def _ungradable_ear_checklist() -> dict[str, Any]:
+
+        return {
+            "earwax": {
+                "amount":
+                    "ungradable",
+                "deposit_on_eardrum":
+                    "ungradable",
+                "colour":
+                    "ungradable",
+                "type":
+                    "ungradable",
+            },
+            "ear_canal": {
+                "redness_swelling":
+                    "ungradable",
+                "bleeding_trauma":
+                    "ungradable",
+                "foreign_body_visualised":
+                    "ungradable",
+            },
+            "eardrum": {
+                "visibility":
+                    "ungradable",
+                "colour":
+                    "ungradable",
+                "intactness":
+                    "ungradable",
+                "bulging":
+                    "ungradable",
+                "discharge":
+                    "ungradable",
+                "handle_of_malleus_visibility":
+                    "ungradable",
+                "cone_of_light_visibility":
+                    "ungradable",
+            },
+        }
+
+    @classmethod
+    def _normalize_ear_checklist(
+        cls,
+        value: Any,
+    ) -> dict[str, Any]:
+
+        if not isinstance(
+            value,
+            dict,
+        ):
+            return cls._ungradable_ear_checklist()
+
+        earwax = value.get(
+            "earwax",
+            {},
+        )
+
+        if not isinstance(
+            earwax,
+            dict,
+        ):
+            earwax = {}
+
+        ear_canal = value.get(
+            "ear_canal",
+            {},
+        )
+
+        if not isinstance(
+            ear_canal,
+            dict,
+        ):
+            ear_canal = {}
+
+        eardrum = value.get(
+            "eardrum",
+            {},
+        )
+
+        if not isinstance(
+            eardrum,
+            dict,
+        ):
+            eardrum = {}
+
+        return {
+            "earwax": {
+                "amount":
+                    cls._normalize_ear_enum(
+                        earwax.get(
+                            "amount"
+                        ),
+                        EARWAX_AMOUNT_VALUES,
+                    ),
+                "deposit_on_eardrum":
+                    cls._normalize_ear_enum(
+                        earwax.get(
+                            "deposit_on_eardrum"
+                        ),
+                        EARWAX_DEPOSIT_VALUES,
+                    ),
+                "colour":
+                    cls._normalize_ear_colour(
+                        earwax.get(
+                            "colour"
+                        )
+                    ),
+                "type":
+                    cls._normalize_ear_enum(
+                        earwax.get(
+                            "type"
+                        ),
+                        EARWAX_TYPE_VALUES,
+                    ),
+            },
+            "ear_canal": {
+                "redness_swelling":
+                    cls._normalize_ear_enum(
+                        ear_canal.get(
+                            "redness_swelling"
+                        ),
+                        EAR_CANAL_VALUES,
+                    ),
+                "bleeding_trauma":
+                    cls._normalize_ear_enum(
+                        ear_canal.get(
+                            "bleeding_trauma"
+                        ),
+                        EAR_CANAL_VALUES,
+                    ),
+                "foreign_body_visualised":
+                    cls._normalize_ear_enum(
+                        ear_canal.get(
+                            "foreign_body_visualised"
+                        ),
+                        EAR_CANAL_VALUES,
+                    ),
+            },
+            "eardrum": {
+                "visibility":
+                    cls._normalize_ear_enum(
+                        eardrum.get(
+                            "visibility"
+                        ),
+                        EARDRUM_VISIBILITY_VALUES,
+                    ),
+                "colour":
+                    cls._normalize_ear_colour(
+                        eardrum.get(
+                            "colour"
+                        )
+                    ),
+                "intactness":
+                    cls._normalize_ear_enum(
+                        eardrum.get(
+                            "intactness"
+                        ),
+                        EARDRUM_INTACTNESS_VALUES,
+                    ),
+                "bulging":
+                    cls._normalize_ear_enum(
+                        eardrum.get(
+                            "bulging"
+                        ),
+                        EAR_CANAL_VALUES,
+                    ),
+                "discharge":
+                    cls._normalize_ear_enum(
+                        eardrum.get(
+                            "discharge"
+                        ),
+                        EAR_CANAL_VALUES,
+                    ),
+                "handle_of_malleus_visibility":
+                    cls._normalize_ear_enum(
+                        eardrum.get(
+                            "handle_of_malleus_visibility"
+                        ),
+                        EARDRUM_VISIBILITY_VALUES,
+                    ),
+                "cone_of_light_visibility":
+                    cls._normalize_ear_enum(
+                        eardrum.get(
+                            "cone_of_light_visibility"
+                        ),
+                        EARDRUM_VISIBILITY_VALUES,
+                    ),
+            },
+        }
+
+    @classmethod
+    def _include_ear_checklist(
+        cls,
+        result: dict[str, Any],
+        include_ear_checklist: bool,
+        value: Any = None,
+    ) -> dict[str, Any]:
+
+        if include_ear_checklist:
+            result[
+                "ear_checklist"
+            ] = cls._normalize_ear_checklist(
+                value
+            )
+
+        return result
 
     @staticmethod
     def _limited_unique_string_list(
@@ -477,6 +830,7 @@ Return JSON only.
     def _parse_sectioned_plain_text(
         cls,
         text: str,
+        include_ear_checklist: bool,
     ) -> dict[str, Any] | None:
 
         sections = cls._plain_text_sections(
@@ -530,63 +884,67 @@ Return JSON only.
         }:
             confidence = "low"
 
-        return {
-            "findings":
-                sections.get(
-                    "findings",
-                    "",
-                ).strip(),
+        return cls._include_ear_checklist(
+            {
+                "findings":
+                    sections.get(
+                        "findings",
+                        "",
+                    ).strip(),
 
-            "severity":
-                severity,
+                "severity":
+                    severity,
 
-            "confidence":
-                confidence,
+                "confidence":
+                    confidence,
 
-            "flags":
-                cls._limited_unique_string_list(
-                    cls._plain_text_list(
-                        sections.get(
-                            "flags",
-                            "",
-                        )
-                    ),
-                    6,
-                ),
-
-            "evidence":
-                cls._limited_unique_string_list(
-                    cls._plain_text_list(
-                        sections.get(
-                            "evidence",
-                            "",
-                        )
-                    ),
-                    5,
-                ),
-
-            "limitations":
-                cls._limited_unique_string_list(
-                    [
-                        item
-                        for item in cls._plain_text_list(
+                "flags":
+                    cls._limited_unique_string_list(
+                        cls._plain_text_list(
                             sections.get(
-                                "limitations",
+                                "flags",
                                 "",
                             )
-                        )
-                        if not cls._is_demographic_limitation(
+                        ),
+                        6,
+                    ),
+
+                "evidence":
+                    cls._limited_unique_string_list(
+                        cls._plain_text_list(
+                            sections.get(
+                                "evidence",
+                                "",
+                            )
+                        ),
+                        5,
+                    ),
+
+                "limitations":
+                    cls._limited_unique_string_list(
+                        [
                             item
-                        )
-                    ],
-                    3,
-                ),
-        }
+                            for item in cls._plain_text_list(
+                                sections.get(
+                                    "limitations",
+                                    "",
+                                )
+                            )
+                            if not cls._is_demographic_limitation(
+                                item
+                            )
+                        ],
+                        3,
+                    ),
+            },
+            include_ear_checklist,
+        )
 
     @classmethod
     def _parse_malformed_json(
         cls,
         text: str,
+        include_ear_checklist: bool,
     ) -> dict[str, Any]:
 
         findings = cls._json_string_field(
@@ -595,9 +953,36 @@ Return JSON only.
         )
 
         if findings is not None:
-            return {
+            return cls._include_ear_checklist(
+                {
+                    "findings":
+                        findings.strip(),
+
+                    "severity":
+                        "unknown",
+
+                    "confidence":
+                        "low",
+
+                    "flags":
+                        [],
+
+                    "evidence":
+                        [],
+
+                    "limitations": [
+                        "The model response was incomplete or malformed; "
+                        "severity could not be reliably determined."
+                    ],
+                },
+                include_ear_checklist,
+            )
+
+        return cls._include_ear_checklist(
+            {
                 "findings":
-                    findings.strip(),
+                    "The image analysis completed, but the structured "
+                    "result could not be parsed reliably.",
 
                 "severity":
                     "unknown",
@@ -612,37 +997,17 @@ Return JSON only.
                     [],
 
                 "limitations": [
-                    "The model response was incomplete or malformed; "
-                    "severity could not be reliably determined."
+                    "The model response was incomplete or malformed."
                 ],
-            }
-
-        return {
-            "findings":
-                "The image analysis completed, but the structured "
-                "result could not be parsed reliably.",
-
-            "severity":
-                "unknown",
-
-            "confidence":
-                "low",
-
-            "flags":
-                [],
-
-            "evidence":
-                [],
-
-            "limitations": [
-                "The model response was incomplete or malformed."
-            ],
-        }
+            },
+            include_ear_checklist,
+        )
 
     @classmethod
     def _parse_json(
         cls,
         text: str,
+        include_ear_checklist: bool = False,
     ) -> dict[str, Any]:
 
         if not text:
@@ -721,10 +1086,12 @@ Return JSON only.
             ):
                 return cls._parse_malformed_json(
                     cleaned,
+                    include_ear_checklist,
                 )
 
             sectioned_data = cls._parse_sectioned_plain_text(
                 cleaned,
+                include_ear_checklist,
             )
 
             if sectioned_data is not None:
@@ -733,29 +1100,33 @@ Return JSON only.
             if not is_non_medical:
                 return cls._parse_malformed_json(
                     cleaned,
+                    include_ear_checklist,
                 )
 
-            return {
-                "findings":
-                    original_text,
+            return cls._include_ear_checklist(
+                {
+                    "findings":
+                        original_text,
 
-                "severity":
-                    "normal",
+                    "severity":
+                        "normal",
 
-                "confidence":
-                    "low",
+                    "confidence":
+                        "low",
 
-                "flags":
-                    [],
+                    "flags":
+                        [],
 
-                "evidence":
-                    [],
+                    "evidence":
+                        [],
 
-                "limitations": [
-                    "MedGemma returned unstructured text "
-                    "instead of the requested JSON format."
-                ],
-            }
+                    "limitations": [
+                        "MedGemma returned unstructured text "
+                        "instead of the requested JSON format."
+                    ],
+                },
+                include_ear_checklist,
+            )
 
         severity = str(
             data.get(
@@ -802,13 +1173,14 @@ Return JSON only.
             )
         )
 
-        return {
-            "findings": str(
-                data.get(
-                    "findings",
-                    "",
-                )
-            ).strip(),
+        result = {
+            "findings":
+                str(
+                    data.get(
+                        "findings",
+                        "",
+                    )
+                ).strip(),
 
             "severity":
                 severity,
@@ -825,6 +1197,14 @@ Return JSON only.
             "limitations":
                 limitations,
         }
+
+        return cls._include_ear_checklist(
+            result,
+            include_ear_checklist,
+            data.get(
+                "ear_checklist"
+            ),
+        )
 
     def _cleanup_gpu(self):
         gc.collect()
@@ -1030,6 +1410,10 @@ Return JSON only.
 
         model, processor = self._load_medgemma()
 
+        include_ear_checklist = self._needs_ear_checklist(
+            prompt
+        )
+
         pil_images = self._images(
             images
         )
@@ -1113,7 +1497,8 @@ Return JSON only.
 
         result = (
             self._parse_json(
-                text
+                text,
+                include_ear_checklist=include_ear_checklist,
             )
         )
 
@@ -1519,7 +1904,7 @@ Return JSON only.
         )
 
         if is_non_medical:
-            return {
+            consensus = {
                 "findings":
                     findings,
 
@@ -1553,6 +1938,15 @@ Return JSON only.
                 "model_results":
                     results,
             }
+
+            if "ear_checklist" in medgemma:
+                consensus[
+                    "ear_checklist"
+                ] = medgemma[
+                    "ear_checklist"
+                ]
+
+            return consensus
 
         lightweight_results = {}
 
@@ -1665,7 +2059,7 @@ Return JSON only.
         ):
             confidence = "medium"
 
-        return {
+        consensus = {
             "findings":
                 findings,
 
@@ -1702,6 +2096,15 @@ Return JSON only.
             "model_results":
                 results,
         }
+
+        if "ear_checklist" in medgemma:
+            consensus[
+                "ear_checklist"
+            ] = medgemma[
+                "ear_checklist"
+            ]
+
+        return consensus
 
 
 model_manager = MedicalModelManager()

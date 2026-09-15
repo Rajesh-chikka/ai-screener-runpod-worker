@@ -162,48 +162,57 @@ def handler(job):
                     len(images),
             }
 
+        result = {
+            "findings":
+                consensus[
+                    "findings"
+                ],
+
+            "severity":
+                consensus[
+                    "severity"
+                ],
+
+            "confidence":
+                consensus[
+                    "confidence"
+                ],
+
+            "flags":
+                consensus[
+                    "flags"
+                ],
+
+            "evidence":
+                consensus[
+                    "evidence"
+                ],
+
+            "limitations":
+                consensus[
+                    "limitations"
+                ],
+
+            "supporting_labels":
+                consensus[
+                    "supporting_labels"
+                ],
+
+            "model_agreement":
+                consensus[
+                    "model_agreement"
+                ],
+        }
+
+        if "ear_checklist" in consensus:
+            result[
+                "ear_checklist"
+            ] = consensus[
+                "ear_checklist"
+            ]
+
         return {
-            "result": {
-                "findings":
-                    consensus[
-                        "findings"
-                    ],
-
-                "severity":
-                    consensus[
-                        "severity"
-                    ],
-
-                "confidence":
-                    consensus[
-                        "confidence"
-                    ],
-
-                "flags":
-                    consensus[
-                        "flags"
-                    ],
-
-                "evidence":
-                    consensus[
-                        "evidence"
-                    ],
-
-                "limitations":
-                    consensus[
-                        "limitations"
-                    ],
-
-                "supporting_labels":
-                    consensus[
-                        "supporting_labels"
-                    ],
-
-                "model_agreement":
-                    consensus[
-                        "model_agreement"
-                    ],
-            },
+            "result": result,
 
             "models":
                 model_results,
