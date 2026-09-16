@@ -288,14 +288,16 @@ class MedicalModelManager:
 
         lower_prompt = prompt.lower()
 
-        explicit_matches = [
-            key
-            for key in OPTIONAL_CHECKLIST_KEYS
-            if key in lower_prompt
-        ]
+        marker_match = re.search(
+            r"\bchecklist_type\s*=\s*"
+            r"(ear_checklist|gums_checklist|jaw_checklist|throat_checklist)\b",
+            lower_prompt,
+        )
 
-        if explicit_matches:
-            return explicit_matches
+        if marker_match:
+            return [
+                marker_match.group(1)
+            ]
 
         matches = []
 
@@ -343,7 +345,10 @@ Because the request includes an ear checklist, include the ear_checklist key.
 
 Assess only what is visibly present in the provided ear frames.
 Evaluate the ear canal and tympanic membrane using the requested checklist.
+You MUST complete the ear_checklist object with earwax, ear_canal, and eardrum fields.
 If a feature cannot be reliably assessed, return ungradable.
+Evaluate every checklist field independently.
+Do not mark the entire checklist ungradable simply because some structures are not visible.
 Do not infer findings that are not clearly visible.
 Do not diagnose disease.
 Return structured JSON only.
@@ -356,8 +361,12 @@ Return structured JSON only.
 Because the request includes a gums checklist, include the gums_checklist key.
 
 Assess only visible lips, gingiva, teeth immediately adjacent to the gingiva, and relevant visible oral mucosa.
+You MUST complete gums_checklist.lips with: colour_abnormality, pigmentation, dryness_cracking, swelling, ulcer_erosion, focal_lesion_lump.
+You MUST complete gums_checklist.gums with: abnormal_redness_swelling, pigmentation_focal_colour_change, visible_plaque_calculus, bleeding_ulceration_crypts.
 Use present, absent, or ungradable for every gums_checklist field.
 Use ungradable where visibility is insufficient.
+Evaluate every checklist field independently.
+Do not mark the entire checklist ungradable simply because some structures are not visible.
 Do not infer periodontal disease, pockets, recession, occlusion, or discharge unless directly visible.
 Do not infer colour abnormalities from expected anatomy.
 Do not diagnose disease.
@@ -371,8 +380,11 @@ Return structured JSON only.
 Because the request includes a jaw checklist, include the jaw_checklist key.
 
 Assess only visible dentition and gingiva.
+You MUST complete jaw_checklist with: missing_teeth, visible_tooth_discoloration, visible_cavity_defect, broken_chipped_tooth, significant_tooth_wear_erosion, crowding, misalignment, significant_spacing_gaps, plaque_calculus, gum_redness_swelling_recession.
 Use present, absent, or ungradable for every jaw_checklist field.
 Use ungradable where visibility is insufficient.
+Evaluate every checklist field independently.
+Do not mark the entire checklist ungradable simply because some features are not visible.
 A visible cavity/defect requires an actual visible defect or cavitation, not merely discoloration.
 Do not infer missing teeth outside the visible field, periodontal disease, TMJ dysfunction, bite dysfunction, pain, or symptoms.
 Do not diagnose disease.
@@ -386,9 +398,13 @@ Return structured JSON only.
 Because the request includes a throat checklist, include the throat_checklist key.
 
 Assess only visible tongue, uvula, tonsils, and throat structures requested by the checklist.
+You MUST complete throat_checklist.tongue with: adequately_visible, abnormal_colour_pigmentation, coating, fissures_irregular_surface, ulcer_erosion, focal_lesion_swelling, asymmetry_deviation.
+You MUST complete throat_checklist.throat with: uvula_visible, uvula_approximately_midline, tonsils_visible, tonsillar_asymmetry_swelling, white_yellow_material_on_tonsils, throat_redness, focal_lesion_mass.
 Use yes, partial, no, or ungradable for visibility fields.
 Use present, absent, or ungradable for other appearance fields.
 Use ungradable where visibility is insufficient.
+Evaluate every checklist field independently.
+Do not mark the entire checklist ungradable simply because tonsils, uvula, or other structures are not visible.
 Do not infer infection, malignancy, tonsillitis, pharyngitis, symptoms, or hidden findings.
 Do not diagnose disease.
 Return structured JSON only.
@@ -1071,6 +1087,8 @@ Return JSON only.
         result: dict[str, Any],
         requested_checklists: list[str] | None,
         source: Any = None,
+        json_parsed: bool = False,
+        fallback_used: bool = False,
     ) -> dict[str, Any]:
 
         if not requested_checklists:
@@ -1083,6 +1101,31 @@ Return JSON only.
             source = {}
 
         for checklist_key in requested_checklists:
+            checklist_found = (
+                checklist_key in source
+                and isinstance(
+                    source.get(
+                        checklist_key
+                    ),
+                    dict,
+                )
+            )
+
+            all_ungradable_fallback = (
+                fallback_used
+                or not checklist_found
+            )
+
+            print(
+                "[CHECKLIST PARSE] "
+                f"requested={checklist_key} "
+                f"found={str(checklist_found).lower()} "
+                f"json_parsed={str(json_parsed).lower()} "
+                "normalized=true "
+                f"all_ungradable_fallback={str(all_ungradable_fallback).lower()}",
+                flush=True,
+            )
+
             result[
                 checklist_key
             ] = cls._normalize_checklist(
@@ -1385,6 +1428,8 @@ Return JSON only.
                 if include_ear_checklist
                 else []
             ),
+            json_parsed=False,
+            fallback_used=True,
         )
 
     @classmethod
@@ -1434,6 +1479,8 @@ Return JSON only.
                     ],
                 },
                 checklist_keys,
+                json_parsed=False,
+                fallback_used=True,
             )
 
         return cls._include_requested_checklists(
@@ -1459,6 +1506,8 @@ Return JSON only.
                 ],
             },
             checklist_keys,
+            json_parsed=False,
+            fallback_used=True,
         )
 
     @classmethod
@@ -1598,6 +1647,8 @@ Return JSON only.
                     ],
                 },
                 checklist_keys,
+                json_parsed=False,
+                fallback_used=True,
             )
 
         severity = str(
@@ -1674,6 +1725,8 @@ Return JSON only.
             result,
             checklist_keys,
             data,
+            json_parsed=True,
+            fallback_used=False,
         )
 
     def _cleanup_gpu(self):
