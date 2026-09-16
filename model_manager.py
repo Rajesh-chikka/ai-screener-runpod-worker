@@ -47,6 +47,47 @@ EAR_CHECKLIST_PROMPT_TERMS = (
     "tympanic membrane",
 )
 
+GUMS_CHECKLIST_PROMPT_TERMS = (
+    "gums_checklist",
+    "gums",
+    "gingiva",
+    "lips",
+)
+
+JAW_CHECKLIST_PROMPT_TERMS = (
+    "jaw_checklist",
+    "tmj",
+    "jaw",
+    "dentition",
+)
+
+THROAT_CHECKLIST_PROMPT_TERMS = (
+    "throat_checklist",
+    "tongue",
+    "throat",
+    "uvula",
+    "tonsil",
+)
+
+OPTIONAL_CHECKLIST_KEYS = (
+    "ear_checklist",
+    "gums_checklist",
+    "jaw_checklist",
+    "throat_checklist",
+)
+
+PRESENT_ABSENT_VALUES = {
+    "present",
+    "absent",
+    "ungradable",
+}
+
+YES_NO_VALUES = {
+    "yes",
+    "no",
+    "ungradable",
+}
+
 EARWAX_AMOUNT_VALUES = {
     "none",
     "minimal",
@@ -241,6 +282,60 @@ class MedicalModelManager:
         )
 
     @staticmethod
+    def _requested_checklists(
+        prompt: str,
+    ) -> list[str]:
+
+        lower_prompt = prompt.lower()
+
+        explicit_matches = [
+            key
+            for key in OPTIONAL_CHECKLIST_KEYS
+            if key in lower_prompt
+        ]
+
+        if explicit_matches:
+            return explicit_matches
+
+        matches = []
+
+        if MedicalModelManager._needs_ear_checklist(
+            prompt
+        ):
+            matches.append(
+                "ear_checklist"
+            )
+
+        term_groups = [
+            (
+                "gums_checklist",
+                GUMS_CHECKLIST_PROMPT_TERMS,
+            ),
+            (
+                "jaw_checklist",
+                JAW_CHECKLIST_PROMPT_TERMS,
+            ),
+            (
+                "throat_checklist",
+                THROAT_CHECKLIST_PROMPT_TERMS,
+            ),
+        ]
+
+        for key, terms in term_groups:
+            if any(
+                term in lower_prompt
+                for term in terms
+            ):
+                matches.append(
+                    key
+                )
+
+        if len(matches) == 1:
+            return matches
+
+        return []
+
+    @staticmethod
     def _ear_checklist_prompt() -> str:
 
         return """
@@ -255,6 +350,76 @@ Return structured JSON only.
 """.strip()
 
     @staticmethod
+    def _gums_checklist_prompt() -> str:
+
+        return """
+Because the request includes a gums checklist, include the gums_checklist key.
+
+Assess only visible lips, gingiva, teeth immediately adjacent to the gingiva, and relevant visible oral mucosa.
+Use present, absent, or ungradable for every gums_checklist field.
+Use ungradable where visibility is insufficient.
+Do not infer periodontal disease, pockets, recession, occlusion, or discharge unless directly visible.
+Do not infer colour abnormalities from expected anatomy.
+Do not diagnose disease.
+Return structured JSON only.
+""".strip()
+
+    @staticmethod
+    def _jaw_checklist_prompt() -> str:
+
+        return """
+Because the request includes a jaw checklist, include the jaw_checklist key.
+
+Assess only visible dentition and gingiva.
+Use present, absent, or ungradable for every jaw_checklist field.
+Use ungradable where visibility is insufficient.
+A visible cavity/defect requires an actual visible defect or cavitation, not merely discoloration.
+Do not infer missing teeth outside the visible field, periodontal disease, TMJ dysfunction, bite dysfunction, pain, or symptoms.
+Do not diagnose disease.
+Return structured JSON only.
+""".strip()
+
+    @staticmethod
+    def _throat_checklist_prompt() -> str:
+
+        return """
+Because the request includes a throat checklist, include the throat_checklist key.
+
+Assess only visible tongue, uvula, tonsils, and throat structures requested by the checklist.
+Use yes, partial, no, or ungradable for visibility fields.
+Use present, absent, or ungradable for other appearance fields.
+Use ungradable where visibility is insufficient.
+Do not infer infection, malignancy, tonsillitis, pharyngitis, symptoms, or hidden findings.
+Do not diagnose disease.
+Return structured JSON only.
+""".strip()
+
+    @staticmethod
+    def _checklist_prompt(
+        checklist_key: str,
+    ) -> str:
+
+        prompts = {
+            "ear_checklist":
+                MedicalModelManager._ear_checklist_prompt,
+            "gums_checklist":
+                MedicalModelManager._gums_checklist_prompt,
+            "jaw_checklist":
+                MedicalModelManager._jaw_checklist_prompt,
+            "throat_checklist":
+                MedicalModelManager._throat_checklist_prompt,
+        }
+
+        prompt_factory = prompts.get(
+            checklist_key
+        )
+
+        if prompt_factory is None:
+            return ""
+
+        return prompt_factory()
+
+    @staticmethod
     def _analysis_prompt(
         prompt: str,
     ) -> str:
@@ -263,19 +428,32 @@ Return structured JSON only.
             "findings, severity, confidence, flags, evidence, limitations"
         )
 
-        ear_checklist_prompt = ""
+        checklist_prompts = []
 
-        if MedicalModelManager._needs_ear_checklist(
+        requested_checklists = MedicalModelManager._requested_checklists(
             prompt
-        ):
+        )
+
+        for checklist_key in requested_checklists:
             keys = (
                 keys
-                + ", ear_checklist"
+                + f", {checklist_key}"
             )
 
-            ear_checklist_prompt = (
+            checklist_prompts.append(
+                MedicalModelManager._checklist_prompt(
+                    checklist_key
+                )
+            )
+
+        checklist_prompt = ""
+
+        if checklist_prompts:
+            checklist_prompt = (
                 "\n\n"
-                + MedicalModelManager._ear_checklist_prompt()
+                + "\n\n".join(
+                    checklist_prompts
+                )
             )
 
         return f"""
@@ -317,7 +495,7 @@ If the image is not medically meaningful:
 Do not invent patient history.
 Do not infer facts that are not visible.
 Only use visible image evidence.
-{ear_checklist_prompt}
+{checklist_prompt}
 
 Context:
 {prompt}
@@ -648,6 +826,229 @@ Return JSON only.
         }
 
     @classmethod
+    def _normalize_present_absent_group(
+        cls,
+        value: dict[str, Any],
+        fields: list[str],
+    ) -> dict[str, str]:
+
+        return {
+            field:
+                cls._normalize_ear_enum(
+                    value.get(
+                        field
+                    ),
+                    PRESENT_ABSENT_VALUES,
+                )
+            for field in fields
+        }
+
+    @classmethod
+    def _normalize_gums_checklist(
+        cls,
+        value: Any,
+    ) -> dict[str, Any]:
+
+        if not isinstance(
+            value,
+            dict,
+        ):
+            value = {}
+
+        lips = value.get(
+            "lips",
+            {},
+        )
+
+        if not isinstance(
+            lips,
+            dict,
+        ):
+            lips = {}
+
+        gums = value.get(
+            "gums",
+            {},
+        )
+
+        if not isinstance(
+            gums,
+            dict,
+        ):
+            gums = {}
+
+        return {
+            "lips":
+                cls._normalize_present_absent_group(
+                    lips,
+                    [
+                        "colour_abnormality",
+                        "pigmentation",
+                        "dryness_cracking",
+                        "swelling",
+                        "ulcer_erosion",
+                        "focal_lesion_lump",
+                    ],
+                ),
+            "gums":
+                cls._normalize_present_absent_group(
+                    gums,
+                    [
+                        "abnormal_redness_swelling",
+                        "pigmentation_focal_colour_change",
+                        "visible_plaque_calculus",
+                        "bleeding_ulceration_crypts",
+                    ],
+                ),
+        }
+
+    @classmethod
+    def _normalize_jaw_checklist(
+        cls,
+        value: Any,
+    ) -> dict[str, str]:
+
+        if not isinstance(
+            value,
+            dict,
+        ):
+            value = {}
+
+        return cls._normalize_present_absent_group(
+            value,
+            [
+                "missing_teeth",
+                "visible_tooth_discoloration",
+                "visible_cavity_defect",
+                "broken_chipped_tooth",
+                "significant_tooth_wear_erosion",
+                "crowding",
+                "misalignment",
+                "significant_spacing_gaps",
+                "plaque_calculus",
+                "gum_redness_swelling_recession",
+            ],
+        )
+
+    @classmethod
+    def _normalize_throat_checklist(
+        cls,
+        value: Any,
+    ) -> dict[str, Any]:
+
+        if not isinstance(
+            value,
+            dict,
+        ):
+            value = {}
+
+        tongue = value.get(
+            "tongue",
+            {},
+        )
+
+        if not isinstance(
+            tongue,
+            dict,
+        ):
+            tongue = {}
+
+        throat = value.get(
+            "throat",
+            {},
+        )
+
+        if not isinstance(
+            throat,
+            dict,
+        ):
+            throat = {}
+
+        return {
+            "tongue": {
+                "adequately_visible":
+                    cls._normalize_ear_enum(
+                        tongue.get(
+                            "adequately_visible"
+                        ),
+                        EARDRUM_VISIBILITY_VALUES,
+                    ),
+                **cls._normalize_present_absent_group(
+                    tongue,
+                    [
+                        "abnormal_colour_pigmentation",
+                        "coating",
+                        "fissures_irregular_surface",
+                        "ulcer_erosion",
+                        "focal_lesion_swelling",
+                        "asymmetry_deviation",
+                    ],
+                ),
+            },
+            "throat": {
+                "uvula_visible":
+                    cls._normalize_ear_enum(
+                        throat.get(
+                            "uvula_visible"
+                        ),
+                        EARDRUM_VISIBILITY_VALUES,
+                    ),
+                "uvula_approximately_midline":
+                    cls._normalize_ear_enum(
+                        throat.get(
+                            "uvula_approximately_midline"
+                        ),
+                        YES_NO_VALUES,
+                    ),
+                "tonsils_visible":
+                    cls._normalize_ear_enum(
+                        throat.get(
+                            "tonsils_visible"
+                        ),
+                        EARDRUM_VISIBILITY_VALUES,
+                    ),
+                **cls._normalize_present_absent_group(
+                    throat,
+                    [
+                        "tonsillar_asymmetry_swelling",
+                        "white_yellow_material_on_tonsils",
+                        "throat_redness",
+                        "focal_lesion_mass",
+                    ],
+                ),
+            },
+        }
+
+    @classmethod
+    def _normalize_checklist(
+        cls,
+        checklist_key: str,
+        value: Any,
+    ) -> dict[str, Any]:
+
+        normalizers = {
+            "ear_checklist":
+                cls._normalize_ear_checklist,
+            "gums_checklist":
+                cls._normalize_gums_checklist,
+            "jaw_checklist":
+                cls._normalize_jaw_checklist,
+            "throat_checklist":
+                cls._normalize_throat_checklist,
+        }
+
+        normalizer = normalizers.get(
+            checklist_key
+        )
+
+        if normalizer is None:
+            return {}
+
+        return normalizer(
+            value
+        )
+
+    @classmethod
     def _include_ear_checklist(
         cls,
         result: dict[str, Any],
@@ -660,6 +1061,35 @@ Return JSON only.
                 "ear_checklist"
             ] = cls._normalize_ear_checklist(
                 value
+            )
+
+        return result
+
+    @classmethod
+    def _include_requested_checklists(
+        cls,
+        result: dict[str, Any],
+        requested_checklists: list[str] | None,
+        source: Any = None,
+    ) -> dict[str, Any]:
+
+        if not requested_checklists:
+            return result
+
+        if not isinstance(
+            source,
+            dict,
+        ):
+            source = {}
+
+        for checklist_key in requested_checklists:
+            result[
+                checklist_key
+            ] = cls._normalize_checklist(
+                checklist_key,
+                source.get(
+                    checklist_key
+                ),
             )
 
         return result
@@ -841,6 +1271,7 @@ Return JSON only.
         cls,
         text: str,
         include_ear_checklist: bool,
+        requested_checklists: list[str] | None = None,
     ) -> dict[str, Any] | None:
 
         sections = cls._plain_text_sections(
@@ -894,7 +1325,7 @@ Return JSON only.
         }:
             confidence = "low"
 
-        return cls._include_ear_checklist(
+        return cls._include_requested_checklists(
             {
                 "findings":
                     sections.get(
@@ -947,7 +1378,13 @@ Return JSON only.
                         3,
                     ),
             },
-            include_ear_checklist,
+            requested_checklists
+            if requested_checklists is not None
+            else (
+                ["ear_checklist"]
+                if include_ear_checklist
+                else []
+            ),
         )
 
     @classmethod
@@ -955,7 +1392,18 @@ Return JSON only.
         cls,
         text: str,
         include_ear_checklist: bool,
+        requested_checklists: list[str] | None = None,
     ) -> dict[str, Any]:
+
+        checklist_keys = (
+            requested_checklists
+            if requested_checklists is not None
+            else (
+                ["ear_checklist"]
+                if include_ear_checklist
+                else []
+            )
+        )
 
         findings = cls._json_string_field(
             text,
@@ -963,7 +1411,7 @@ Return JSON only.
         )
 
         if findings is not None:
-            return cls._include_ear_checklist(
+            return cls._include_requested_checklists(
                 {
                     "findings":
                         findings.strip(),
@@ -985,10 +1433,10 @@ Return JSON only.
                         "severity could not be reliably determined."
                     ],
                 },
-                include_ear_checklist,
+                checklist_keys,
             )
 
-        return cls._include_ear_checklist(
+        return cls._include_requested_checklists(
             {
                 "findings":
                     "The image analysis completed, but the structured "
@@ -1010,7 +1458,7 @@ Return JSON only.
                     "The model response was incomplete or malformed."
                 ],
             },
-            include_ear_checklist,
+            checklist_keys,
         )
 
     @classmethod
@@ -1018,7 +1466,18 @@ Return JSON only.
         cls,
         text: str,
         include_ear_checklist: bool = False,
+        requested_checklists: list[str] | None = None,
     ) -> dict[str, Any]:
+
+        checklist_keys = (
+            requested_checklists
+            if requested_checklists is not None
+            else (
+                ["ear_checklist"]
+                if include_ear_checklist
+                else []
+            )
+        )
 
         if not text:
             raise ValueError(
@@ -1097,11 +1556,13 @@ Return JSON only.
                 return cls._parse_malformed_json(
                     cleaned,
                     include_ear_checklist,
+                    checklist_keys,
                 )
 
             sectioned_data = cls._parse_sectioned_plain_text(
                 cleaned,
                 include_ear_checklist,
+                checklist_keys,
             )
 
             if sectioned_data is not None:
@@ -1111,9 +1572,10 @@ Return JSON only.
                 return cls._parse_malformed_json(
                     cleaned,
                     include_ear_checklist,
+                    checklist_keys,
                 )
 
-            return cls._include_ear_checklist(
+            return cls._include_requested_checklists(
                 {
                     "findings":
                         original_text,
@@ -1135,7 +1597,7 @@ Return JSON only.
                         "instead of the requested JSON format."
                     ],
                 },
-                include_ear_checklist,
+                checklist_keys,
             )
 
         severity = str(
@@ -1208,12 +1670,10 @@ Return JSON only.
                 limitations,
         }
 
-        return cls._include_ear_checklist(
+        return cls._include_requested_checklists(
             result,
-            include_ear_checklist,
-            data.get(
-                "ear_checklist"
-            ),
+            checklist_keys,
+            data,
         )
 
     def _cleanup_gpu(self):
@@ -1420,8 +1880,13 @@ Return JSON only.
 
         model, processor = self._load_medgemma()
 
-        include_ear_checklist = self._needs_ear_checklist(
+        requested_checklists = self._requested_checklists(
             prompt
+        )
+
+        include_ear_checklist = (
+            "ear_checklist"
+            in requested_checklists
         )
 
         pil_images = self._images(
@@ -1509,6 +1974,7 @@ Return JSON only.
             self._parse_json(
                 text,
                 include_ear_checklist=include_ear_checklist,
+                requested_checklists=requested_checklists,
             )
         )
 
@@ -1949,12 +2415,13 @@ Return JSON only.
                     results,
             }
 
-            if "ear_checklist" in medgemma:
-                consensus[
-                    "ear_checklist"
-                ] = medgemma[
-                    "ear_checklist"
-                ]
+            for checklist_key in OPTIONAL_CHECKLIST_KEYS:
+                if checklist_key in medgemma:
+                    consensus[
+                        checklist_key
+                    ] = medgemma[
+                        checklist_key
+                    ]
 
             return consensus
 
@@ -2107,12 +2574,13 @@ Return JSON only.
                 results,
         }
 
-        if "ear_checklist" in medgemma:
-            consensus[
-                "ear_checklist"
-            ] = medgemma[
-                "ear_checklist"
-            ]
+        for checklist_key in OPTIONAL_CHECKLIST_KEYS:
+            if checklist_key in medgemma:
+                consensus[
+                    checklist_key
+                ] = medgemma[
+                    checklist_key
+                ]
 
         return consensus
 

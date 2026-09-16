@@ -204,12 +204,18 @@ def handler(job):
                 ],
         }
 
-        if "ear_checklist" in consensus:
-            result[
-                "ear_checklist"
-            ] = consensus[
-                "ear_checklist"
-            ]
+        for checklist_key in [
+            "ear_checklist",
+            "gums_checklist",
+            "jaw_checklist",
+            "throat_checklist",
+        ]:
+            if checklist_key in consensus:
+                result[
+                    checklist_key
+                ] = consensus[
+                    checklist_key
+                ]
 
         return {
             "result": result,
