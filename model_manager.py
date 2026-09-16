@@ -358,56 +358,118 @@ Return structured JSON only.
     def _gums_checklist_prompt() -> str:
 
         return """
-Because the request includes a gums checklist, include the gums_checklist key.
-
-Assess only visible lips, gingiva, teeth immediately adjacent to the gingiva, and relevant visible oral mucosa.
-You MUST complete gums_checklist.lips with: colour_abnormality, pigmentation, dryness_cracking, swelling, ulcer_erosion, focal_lesion_lump.
-You MUST complete gums_checklist.gums with: abnormal_redness_swelling, pigmentation_focal_colour_change, visible_plaque_calculus, bleeding_ulceration_crypts.
-Use present, absent, or ungradable for every gums_checklist field.
-Use ungradable where visibility is insufficient.
-Evaluate every checklist field independently.
-Do not mark the entire checklist ungradable simply because some structures are not visible.
-Do not infer periodontal disease, pockets, recession, occlusion, or discharge unless directly visible.
-Do not infer colour abnormalities from expected anatomy.
+Return ONE valid JSON object matching EXACTLY the schema below.
+Do not add keys. Do not rename keys. Do not add anatomy not listed in the schema.
+Assess ONLY what is visible in the supplied images.
+Evaluate each field independently.
+Use ungradable only when that specific feature cannot be assessed.
 Do not diagnose disease.
-Return structured JSON only.
+Do not output markdown or commentary before or after JSON.
+
+SCHEMA:
+{
+  "findings": "<short 1-3 sentence visual summary>",
+  "severity": "normal|low|moderate|high|unknown",
+  "confidence": "low|medium|high",
+  "flags": [],
+  "evidence": [],
+  "limitations": [],
+  "gums_checklist": {
+    "lips": {
+      "colour_abnormality": "present|absent|ungradable",
+      "pigmentation": "present|absent|ungradable",
+      "dryness_cracking": "present|absent|ungradable",
+      "swelling": "present|absent|ungradable",
+      "ulcer_erosion": "present|absent|ungradable",
+      "focal_lesion_lump": "present|absent|ungradable"
+    },
+    "gums": {
+      "abnormal_redness_swelling": "present|absent|ungradable",
+      "pigmentation_focal_colour_change": "present|absent|ungradable",
+      "visible_plaque_calculus": "present|absent|ungradable",
+      "bleeding_ulceration_crypts": "present|absent|ungradable"
+    }
+  }
+}
 """.strip()
 
     @staticmethod
     def _jaw_checklist_prompt() -> str:
 
         return """
-Because the request includes a jaw checklist, include the jaw_checklist key.
-
-Assess only visible dentition and gingiva.
-You MUST complete jaw_checklist with: missing_teeth, visible_tooth_discoloration, visible_cavity_defect, broken_chipped_tooth, significant_tooth_wear_erosion, crowding, misalignment, significant_spacing_gaps, plaque_calculus, gum_redness_swelling_recession.
-Use present, absent, or ungradable for every jaw_checklist field.
-Use ungradable where visibility is insufficient.
-Evaluate every checklist field independently.
-Do not mark the entire checklist ungradable simply because some features are not visible.
-A visible cavity/defect requires an actual visible defect or cavitation, not merely discoloration.
-Do not infer missing teeth outside the visible field, periodontal disease, TMJ dysfunction, bite dysfunction, pain, or symptoms.
+Return ONE valid JSON object matching EXACTLY the schema below.
+Do not add keys. Do not rename keys. Do not add anatomy not listed in the schema.
+Assess ONLY what is visible in the supplied images.
+Evaluate each field independently.
+Use ungradable only when that specific feature cannot be assessed.
+A visible_cavity_defect requires an actual visible defect or cavitation, not merely discoloration.
 Do not diagnose disease.
-Return structured JSON only.
+Do not output markdown or commentary before or after JSON.
+
+SCHEMA:
+{
+  "findings": "<short 1-3 sentence visual summary>",
+  "severity": "normal|low|moderate|high|unknown",
+  "confidence": "low|medium|high",
+  "flags": [],
+  "evidence": [],
+  "limitations": [],
+  "jaw_checklist": {
+    "missing_teeth": "present|absent|ungradable",
+    "visible_tooth_discoloration": "present|absent|ungradable",
+    "visible_cavity_defect": "present|absent|ungradable",
+    "broken_chipped_tooth": "present|absent|ungradable",
+    "significant_tooth_wear_erosion": "present|absent|ungradable",
+    "crowding": "present|absent|ungradable",
+    "misalignment": "present|absent|ungradable",
+    "significant_spacing_gaps": "present|absent|ungradable",
+    "plaque_calculus": "present|absent|ungradable",
+    "gum_redness_swelling_recession": "present|absent|ungradable"
+  }
+}
 """.strip()
 
     @staticmethod
     def _throat_checklist_prompt() -> str:
 
         return """
-Because the request includes a throat checklist, include the throat_checklist key.
-
-Assess only visible tongue, uvula, tonsils, and throat structures requested by the checklist.
-You MUST complete throat_checklist.tongue with: adequately_visible, abnormal_colour_pigmentation, coating, fissures_irregular_surface, ulcer_erosion, focal_lesion_swelling, asymmetry_deviation.
-You MUST complete throat_checklist.throat with: uvula_visible, uvula_approximately_midline, tonsils_visible, tonsillar_asymmetry_swelling, white_yellow_material_on_tonsils, throat_redness, focal_lesion_mass.
-Use yes, partial, no, or ungradable for visibility fields.
-Use present, absent, or ungradable for other appearance fields.
-Use ungradable where visibility is insufficient.
-Evaluate every checklist field independently.
-Do not mark the entire checklist ungradable simply because tonsils, uvula, or other structures are not visible.
-Do not infer infection, malignancy, tonsillitis, pharyngitis, symptoms, or hidden findings.
+Return ONE valid JSON object matching EXACTLY the schema below.
+Do not add keys. Do not rename keys. Do not add anatomy not listed in the schema.
+Assess ONLY what is visible in the supplied images.
+Evaluate each field independently.
+Use ungradable only when that specific feature cannot be assessed.
 Do not diagnose disease.
-Return structured JSON only.
+Do not output markdown or commentary before or after JSON.
+
+SCHEMA:
+{
+  "findings": "<short 1-3 sentence visual summary>",
+  "severity": "normal|low|moderate|high|unknown",
+  "confidence": "low|medium|high",
+  "flags": [],
+  "evidence": [],
+  "limitations": [],
+  "throat_checklist": {
+    "tongue": {
+      "adequately_visible": "yes|partial|no|ungradable",
+      "abnormal_colour_pigmentation": "present|absent|ungradable",
+      "coating": "present|absent|ungradable",
+      "fissures_irregular_surface": "present|absent|ungradable",
+      "ulcer_erosion": "present|absent|ungradable",
+      "focal_lesion_swelling": "present|absent|ungradable",
+      "asymmetry_deviation": "present|absent|ungradable"
+    },
+    "throat": {
+      "uvula_visible": "yes|partial|no|ungradable",
+      "uvula_approximately_midline": "yes|no|ungradable",
+      "tonsils_visible": "yes|partial|no|ungradable",
+      "tonsillar_asymmetry_swelling": "present|absent|ungradable",
+      "white_yellow_material_on_tonsils": "present|absent|ungradable",
+      "throat_redness": "present|absent|ungradable",
+      "focal_lesion_mass": "present|absent|ungradable"
+    }
+  }
+}
 """.strip()
 
     @staticmethod
@@ -1064,6 +1126,60 @@ Return JSON only.
             value
         )
 
+    @staticmethod
+    def _expected_checklist_keys(
+        checklist_key: str,
+    ) -> set[str]:
+
+        expected_keys = {
+            "ear_checklist": {
+                "earwax",
+                "ear_canal",
+                "eardrum",
+            },
+            "gums_checklist": {
+                "lips",
+                "gums",
+            },
+            "jaw_checklist": {
+                "missing_teeth",
+                "visible_tooth_discoloration",
+                "visible_cavity_defect",
+                "broken_chipped_tooth",
+                "significant_tooth_wear_erosion",
+                "crowding",
+                "misalignment",
+                "significant_spacing_gaps",
+                "plaque_calculus",
+                "gum_redness_swelling_recession",
+            },
+            "throat_checklist": {
+                "tongue",
+                "throat",
+            },
+        }
+
+        return expected_keys.get(
+            checklist_key,
+            set(),
+        )
+
+    @staticmethod
+    def _log_structured_parse_failure(
+        requested_checklists: list[str],
+        reason: str,
+    ) -> None:
+
+        for checklist_key in requested_checklists:
+            print(
+                "[STRUCTURED] "
+                f"requested={checklist_key} "
+                "json_parsed=false "
+                "fallback=true "
+                f"reason={reason}",
+                flush=True,
+            )
+
     @classmethod
     def _include_ear_checklist(
         cls,
@@ -1111,18 +1227,32 @@ Return JSON only.
                 )
             )
 
+            extra_checklist_keys = 0
+
+            if checklist_found:
+                extra_checklist_keys = len(
+                    set(
+                        source[
+                            checklist_key
+                        ].keys()
+                    )
+                    - cls._expected_checklist_keys(
+                        checklist_key
+                    )
+                )
+
             all_ungradable_fallback = (
                 fallback_used
                 or not checklist_found
             )
 
             print(
-                "[CHECKLIST PARSE] "
+                "[STRUCTURED] "
                 f"requested={checklist_key} "
-                f"found={str(checklist_found).lower()} "
                 f"json_parsed={str(json_parsed).lower()} "
-                "normalized=true "
-                f"all_ungradable_fallback={str(all_ungradable_fallback).lower()}",
+                f"expected_checklist={str(checklist_found).lower()} "
+                f"extra_checklist_keys={extra_checklist_keys} "
+                f"fallback={str(all_ungradable_fallback).lower()}",
                 flush=True,
             )
 
@@ -1535,10 +1665,17 @@ Return JSON only.
 
         original_text = text.strip()
 
-        print(
-            f"[MEDGEMMA RAW OUTPUT] {original_text}",
-            flush=True,
-        )
+        if checklist_keys:
+            print(
+                "[MEDGEMMA OUTPUT] "
+                f"structured=true chars={len(original_text)}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[MEDGEMMA RAW OUTPUT] {original_text}",
+                flush=True,
+            )
 
         cleaned = re.sub(
             r"^```(?:json)?\s*",
@@ -1602,6 +1739,11 @@ Return JSON only.
                 not is_non_medical
                 and looks_like_json
             ):
+                cls._log_structured_parse_failure(
+                    checklist_keys,
+                    "truncated_json",
+                )
+
                 return cls._parse_malformed_json(
                     cleaned,
                     include_ear_checklist,
@@ -1618,6 +1760,11 @@ Return JSON only.
                 return sectioned_data
 
             if not is_non_medical:
+                cls._log_structured_parse_failure(
+                    checklist_keys,
+                    "unstructured_output",
+                )
+
                 return cls._parse_malformed_json(
                     cleaned,
                     include_ear_checklist,
@@ -1942,6 +2089,17 @@ Return JSON only.
             in requested_checklists
         )
 
+        generation_max_tokens = max_tokens
+
+        if (
+            requested_checklists
+            and not include_ear_checklist
+        ):
+            generation_max_tokens = max(
+                max_tokens,
+                768,
+            )
+
         pil_images = self._images(
             images
         )
@@ -2009,7 +2167,7 @@ Return JSON only.
         with torch.inference_mode():
             output = model.generate(
                 **inputs,
-                max_new_tokens=max_tokens,
+                max_new_tokens=generation_max_tokens,
                 do_sample=False,
             )
 
